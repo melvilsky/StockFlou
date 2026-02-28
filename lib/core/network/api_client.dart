@@ -1,9 +1,23 @@
 import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+
 import '../../models/generation_options.dart';
+
+/// Выполняется в отдельном isolate, чтобы не блокировать UI.
+Uint8List? _resizeImageInIsolate(Uint8List bytes) {
+  final image = img.decodeImage(bytes);
+  if (image == null) return null;
+  final resized = image.width > image.height
+      ? img.copyResize(image, width: 1600)
+      : img.copyResize(image, height: 1600);
+  return Uint8List.fromList(img.encodeJpg(resized, quality: 85));
+}
 
 class ApiClient {
   static const String _baseUrl =
@@ -20,31 +34,25 @@ class ApiClient {
     File file = File(filePath);
     String uploadPath = filePath;
 
-    // Server-side limits are around 4.5MB (Vercel/serverless).
-    // Most stock photos are much larger. Downscale for the AI.
+    // Ресайз в отдельном isolate, чтобы не подвисал UI
     if (file.lengthSync() > 4 * 1024 * 1024) {
       final bytes = await file.readAsBytes();
-      final image = img.decodeImage(bytes);
-      if (image != null) {
-        // Resize to max 1600px on the longest side
-        img.Image resized;
-        if (image.width > image.height) {
-          resized = img.copyResize(image, width: 1600);
-        } else {
-          resized = img.copyResize(image, height: 1600);
-        }
-
+      final resizedBytes = await compute(
+        _resizeImageInIsolate,
+        bytes,
+        debugLabel: 'resizeImage',
+      );
+      if (resizedBytes != null && resizedBytes.isNotEmpty) {
         final tempDir = await getTemporaryDirectory();
-        final stockFlouTemp = Directory(p.join(tempDir.path, 'stockflou_temp'));
+        final stockFlouTemp =
+            Directory(p.join(tempDir.path, 'stockflou_temp'));
         if (!await stockFlouTemp.exists()) {
           await stockFlouTemp.create(recursive: true);
         }
-
         final tempPath = p.join(
           stockFlouTemp.path,
           'resized_${DateTime.now().millisecondsSinceEpoch}.jpg',
         );
-        final resizedBytes = img.encodeJpg(resized, quality: 85);
         await File(tempPath).writeAsBytes(resizedBytes);
         uploadPath = tempPath;
       }

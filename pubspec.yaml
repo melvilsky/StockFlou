@@ -52,6 +52,7 @@ dependencies:
   collection: ^1.19.1
   pool: ^1.5.2
   path: ^1.9.1
+  macos_secure_bookmarks: ^0.2.1
 
 dev_dependencies:
   flutter_test:

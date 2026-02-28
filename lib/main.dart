@@ -1,11 +1,15 @@
+import 'dart:io';
+
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 import 'core/theme/app_theme.dart';
+import 'core/state/navigation_provider.dart';
+import 'core/state/workspaces_provider.dart';
 import 'features/generation/presentation/generation_screen.dart';
 import 'features/history/presentation/history_screen.dart';
 import 'features/settings/settings_screen.dart';
-import 'core/state/navigation_provider.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -109,55 +113,63 @@ class _MainShellState extends ConsumerState<MainShell> {
                   ),
                 ),
 
-                // Navigation
-                Expanded(
-                  child: ListView(
-                    padding: const EdgeInsets.all(8),
-                    children: [
-                      _SidebarItem(
-                        icon: Icons.folder_outlined,
-                        label: 'Workspaces',
-                        isSelected: currentIndex == 0,
-                        onTap: () =>
-                            ref.read(navigationProvider.notifier).setIndex(0),
-                      ),
-                      _SidebarItem(
-                        icon: Icons.schedule_outlined,
-                        label: 'Recent',
-                        isSelected: currentIndex == 1,
-                        onTap: () =>
-                            ref.read(navigationProvider.notifier).setIndex(1),
-                      ),
-                      _SidebarItem(
-                        icon: Icons.cloud_upload_outlined,
-                        label: 'Uploads',
-                        isSelected: currentIndex == 2,
-                        onTap: () =>
-                            ref.read(navigationProvider.notifier).setIndex(2),
-                      ),
-                      _SidebarItem(
-                        icon: Icons.analytics_outlined,
-                        label: 'Analytics',
-                        isSelected: currentIndex == 3,
-                        onTap: () =>
-                            ref.read(navigationProvider.notifier).setIndex(3),
-                      ),
-                    ],
-                  ),
-                ),
+                // Рабочие области — только в разделе «Рабочее пространство»
+                if (currentIndex == 0)
+                  _buildWorkspacesBlock(context, colorScheme, ref),
 
-                // Settings
+                const Spacer(),
+
+                // Разделы и настройки — компактная горизонтальная панель внизу
                 Container(
-                  padding: const EdgeInsets.all(8),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
                   decoration: BoxDecoration(
                     border: Border(top: BorderSide(color: colorScheme.outline)),
                   ),
-                  child: _SidebarItem(
-                    icon: Icons.settings_outlined,
-                    label: 'Settings',
-                    isSelected: currentIndex == 4,
-                    onTap: () =>
-                        ref.read(navigationProvider.notifier).setIndex(4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _SidebarIconItem(
+                        icon: Icons.folder_outlined,
+                        tooltip: 'Рабочее пространство',
+                        isSelected: currentIndex == 0,
+                        onTap: () =>
+                            ref.read(navigationProvider.notifier).setIndex(0),
+                        compact: true,
+                      ),
+                      _SidebarIconItem(
+                        icon: Icons.schedule_outlined,
+                        tooltip: 'Recent',
+                        isSelected: currentIndex == 1,
+                        onTap: () =>
+                            ref.read(navigationProvider.notifier).setIndex(1),
+                        compact: true,
+                      ),
+                      _SidebarIconItem(
+                        icon: Icons.cloud_upload_outlined,
+                        tooltip: 'Uploads',
+                        isSelected: currentIndex == 2,
+                        onTap: () =>
+                            ref.read(navigationProvider.notifier).setIndex(2),
+                        compact: true,
+                      ),
+                      _SidebarIconItem(
+                        icon: Icons.analytics_outlined,
+                        tooltip: 'Analytics',
+                        isSelected: currentIndex == 3,
+                        onTap: () =>
+                            ref.read(navigationProvider.notifier).setIndex(3),
+                        compact: true,
+                      ),
+                      _SidebarIconItem(
+                        icon: Icons.settings_outlined,
+                        tooltip: 'Настройки',
+                        isSelected: currentIndex == 4,
+                        onTap: () =>
+                            ref.read(navigationProvider.notifier).setIndex(4),
+                        compact: true,
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -178,6 +190,225 @@ class _MainShellState extends ConsumerState<MainShell> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildWorkspacesBlock(
+      BuildContext context, ColorScheme colorScheme, WidgetRef ref) {
+    final workspaces = ref.watch(workspacesProvider);
+    final paths = workspaces.paths;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final blockBg = isDark
+        ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
+        : colorScheme.surfaceContainerLow;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: blockBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: colorScheme.outline.withValues(alpha: 0.2),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Рабочие области',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+              color: colorScheme.onSurface.withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(height: 10),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 160),
+            child: paths.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Text(
+                      'Нет папок',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colorScheme.onSurface.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: paths.length,
+                    itemBuilder: (context, idx) {
+                      final path = paths[idx];
+                      final name = path.split(Platform.pathSeparator).last;
+                      final isSelected = idx == workspaces.currentIndex;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: () {
+                              ref.read(workspacesProvider.notifier).setCurrent(idx);
+                              ref.read(navigationProvider.notifier).setIndex(0);
+                            },
+                            borderRadius: BorderRadius.circular(8),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? colorScheme.primary.withValues(alpha: 0.15)
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.folder_outlined,
+                                    size: 18,
+                                    color: isSelected
+                                        ? colorScheme.primary
+                                        : colorScheme.onSurface
+                                            .withValues(alpha: 0.6),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Tooltip(
+                                      message: path,
+                                      child: Text(
+                                        name,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: isSelected
+                                              ? FontWeight.w600
+                                              : FontWeight.normal,
+                                          color: isSelected
+                                              ? colorScheme.primary
+                                              : colorScheme.onSurface,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: Icon(
+                                      Icons.close,
+                                      size: 16,
+                                      color: colorScheme.onSurface.withValues(alpha: 0.5),
+                                    ),
+                                    onPressed: () {
+                                      ref.read(workspacesProvider.notifier).removeWorkspace(idx);
+                                    },
+                                    tooltip: 'Удалить из рабочих областей',
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(
+                                      minWidth: 28,
+                                      minHeight: 28,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 34,
+            child: FilledButton.icon(
+              onPressed: () async {
+                final path = await getDirectoryPath();
+                if (path != null && path.isNotEmpty) {
+                  await ref.read(workspacesProvider.notifier).addWorkspace(path);
+                  if (context.mounted) {
+                    ref.read(navigationProvider.notifier).setIndex(0);
+                  }
+                }
+              },
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Добавить папку'),
+              style: FilledButton.styleFrom(
+                backgroundColor: colorScheme.primary,
+                foregroundColor: colorScheme.onPrimary,
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          SizedBox(
+            height: 34,
+            child: OutlinedButton.icon(
+              onPressed: workspaces.currentPath == null
+                  ? null
+                  : () {
+                      ref.read(refreshWorkspaceProvider.notifier).trigger();
+                      ref.read(navigationProvider.notifier).setIndex(0);
+                    },
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('Обновить'),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: colorScheme.outline),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+}
+
+class _SidebarIconItem extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final bool compact;
+
+  const _SidebarIconItem({
+    required this.icon,
+    required this.tooltip,
+    required this.isSelected,
+    required this.onTap,
+    this.compact = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final primary = colorScheme.primary;
+    final selectedBg = primary.withValues(alpha: 0.12);
+    final padding = compact ? 6.0 : 12.0;
+    final iconSize = compact ? 20.0 : 24.0;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(compact ? 6 : 8),
+          child: Container(
+            padding: EdgeInsets.all(padding),
+            decoration: BoxDecoration(
+              color: isSelected ? selectedBg : Colors.transparent,
+              borderRadius: BorderRadius.circular(compact ? 6 : 8),
+            ),
+            child: Icon(
+              icon,
+              size: iconSize,
+              color: isSelected ? primary : colorScheme.onSurface.withValues(alpha: 0.7),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -212,14 +443,11 @@ class _SidebarItem extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(8),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
           hoverColor: isSelected ? selectedBg : unselectedHover,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -247,7 +475,6 @@ class _SidebarItem extends StatelessWidget {
               ],
             ),
           ),
-        ),
         ),
       ),
     );

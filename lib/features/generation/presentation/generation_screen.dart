@@ -4,6 +4,7 @@ import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:macos_secure_bookmarks/macos_secure_bookmarks.dart';
 import 'package:pool/pool.dart';
 import 'package:uuid/uuid.dart';
 
@@ -13,6 +14,7 @@ import '../../../core/services/metadata_service.dart';
 import '../../../core/state/files_provider.dart';
 import '../../../core/state/navigation_provider.dart';
 import '../../../core/state/settings_provider.dart';
+import '../../../core/state/workspaces_provider.dart';
 import '../../../models/app_file.dart';
 import '../../../models/generation_options.dart';
 
@@ -45,12 +47,237 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
   double _numKeywords = 15;
   final _titleController = TextEditingController();
   final _keywordsController = TextEditingController();
+  /// Есть несохранённые изменения метаданных у выбранного файла.
+  bool _metadataDirty = false;
+
+  /// На macOS: открытый security-scoped ресурс текущей рабочей области (держим доступ, чтобы миниатюры и чтение файлов работали).
+  FileSystemEntity? _currentScopedResource;
 
   @override
   void dispose() {
+    _releaseSecurityScopedResource();
     _titleController.dispose();
     _keywordsController.dispose();
     super.dispose();
+  }
+
+  Future<void> _releaseSecurityScopedResource() async {
+    if (_currentScopedResource == null) return;
+    try {
+      await _secureBookmarks.stopAccessingSecurityScopedResource(_currentScopedResource!);
+    } catch (_) {}
+    _currentScopedResource = null;
+  }
+
+  static final _secureBookmarks = SecureBookmarks();
+
+  /// Загружает файлы текущей рабочей области из папки (без блокировки UI).
+  /// На macOS при наличии security-scoped bookmark держит доступ открытым до смены папки/dispose,
+  /// чтобы миниатюры (Image.file) и чтение файлов работали.
+  Future<void> _loadCurrentWorkspaceFiles() async {
+    final entry = ref.read(workspacesProvider).currentEntry;
+    if (entry == null || entry.path.trim().isEmpty) {
+      await _releaseSecurityScopedResource();
+      if (mounted) setState(() => _localFiles.clear());
+      return;
+    }
+    final currentPath = entry.path.trim();
+    await _releaseSecurityScopedResource();
+    try {
+      Directory dir;
+      bool scopeStarted = false;
+      if (Platform.isMacOS && entry.bookmark != null) {
+        final entity = await _secureBookmarks.resolveBookmark(
+          entry.bookmark!,
+          isDirectory: true,
+        );
+        dir = entity as Directory;
+        scopeStarted = await _secureBookmarks.startAccessingSecurityScopedResource(entity);
+        if (!scopeStarted || !await dir.exists()) {
+          if (mounted) {
+            setState(() => _localFiles.clear());
+            _showError('Папка не найдена или нет доступа: $currentPath');
+          }
+          return;
+        }
+        _currentScopedResource = dir;
+      } else {
+        dir = Directory(currentPath);
+        if (!await dir.exists()) {
+          if (mounted) {
+            setState(() => _localFiles.clear());
+            _showError('Папка не найдена: $currentPath');
+          }
+          return;
+        }
+      }
+      final imageExtensions = ['.jpg', '.jpeg', '.png'];
+      final videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.m4v'];
+      final allExtensions = [...imageExtensions, ...videoExtensions];
+      final dbFiles = ref.read(filesProvider).value ?? [];
+      final sep = Platform.pathSeparator;
+      final prefix = currentPath.endsWith(sep) ? currentPath : currentPath + sep;
+      final dbPathsInWorkspace =
+          dbFiles.where((f) => f.path == currentPath || f.path.startsWith(prefix)).map((f) => f.path).toSet();
+
+      final List<FileSystemEntity> entities =
+          await dir.list(recursive: false).toList();
+      if (!mounted) return;
+      final newLocal = <File>[];
+      for (var entity in entities) {
+        if (entity is File) {
+          final path = entity.path;
+          final ext = path.split('.').last.toLowerCase();
+          if (allExtensions.contains('.$ext') && !dbPathsInWorkspace.contains(path)) {
+            newLocal.add(entity);
+          }
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _localFiles.clear();
+          _localFiles.addAll(newLocal);
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _localFiles.clear());
+        final msg = e.toString();
+        if (msg.contains('PathAccessException') ||
+            msg.contains('Operation not permitted') ||
+            msg.contains('errno = 1')) {
+          _showDiskAccessRequiredDialog();
+        } else {
+          _showError('Нет доступа к папке или ошибка чтения: $e');
+        }
+      }
+    }
+  }
+
+  /// Открывает системные настройки macOS в разделе «Полный доступ к диску».
+  Future<void> _openFullDiskAccessSettings() async {
+    if (!Platform.isMacOS) return;
+    try {
+      await Process.run(
+        'open',
+        [
+          'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles',
+        ],
+      );
+    } catch (_) {}
+  }
+
+  void _showDiskAccessRequiredDialog() {
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) {
+        final colorScheme = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          title: const Text('Нет доступа к папке'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Чтобы приложение могло видеть файлы в выбранной папке, '
+                  'нужно включить доступ в настройках macOS.',
+                  style: TextStyle(
+                    color: colorScheme.onSurface,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Инструкция:',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '1. Нажмите «Перейти в настройки» ниже.\n'
+                  '2. Откроется «Конфиденциальность и безопасность» → «Полный доступ к диску».\n'
+                  '3. Если приложения Stock Flou нет в списке — нажмите «+» и выберите это приложение (stock_flou.app).\n'
+                  '4. Включите переключатель рядом с Stock Flou.\n'
+                  '5. При необходимости перезапустите приложение.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: colorScheme.onSurface.withValues(alpha: 0.9),
+                    height: 1.45,
+                  ),
+                ),
+                if (Platform.isMacOS) ...[
+                  const SizedBox(height: 12),
+                  Builder(
+                    builder: (ctx) {
+                      String appPath = '';
+                      try {
+                        final exe = Platform.resolvedExecutable;
+                        final parts = exe.split(Platform.pathSeparator);
+                        // .../stock_flou.app/Contents/MacOS/stock_flou -> show .../stock_flou.app
+                        final appIdx = parts.indexWhere((e) => e.endsWith('.app'));
+                        if (appIdx >= 0) {
+                          appPath = parts.sublist(0, appIdx + 1).join(Platform.pathSeparator);
+                        } else {
+                          appPath = exe;
+                        }
+                      } catch (_) {}
+                      if (appPath.isEmpty) return const SizedBox.shrink();
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Путь к приложению (для кнопки «+»):',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: colorScheme.onSurface.withValues(alpha: 0.8),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          SelectableText(
+                            appPath,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontFamily: 'monospace',
+                              color: colorScheme.onSurface.withValues(alpha: 0.7),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Закрыть'),
+            ),
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.of(ctx).pop();
+                _openFullDiskAccessSettings();
+              },
+              icon: const Icon(Icons.settings, size: 18),
+              label: const Text('Перейти в настройки'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Обновить список файлов текущей папки (кнопка «Обновить»).
+  Future<void> _refreshCurrentWorkspace() async {
+    await ref.read(filesProvider.future);
+    await _loadCurrentWorkspaceFiles();
   }
 
   Future<void> _pickFile() async {
@@ -67,8 +294,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       return;
     }
 
-    // Automatically update workspace setting
     await ref.read(settingsProvider.notifier).setWorkspacePath(directoryPath);
+    await ref.read(workspacesProvider.notifier).addWorkspace(directoryPath);
 
     final dir = Directory(directoryPath);
     if (!await dir.exists()) {
@@ -84,8 +311,11 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
     int addedCount = 0;
 
     try {
-      final List<FileSystemEntity> entities = dir.listSync(recursive: false);
+      // Асинхронное чтение директории, чтобы не блокировать UI
+      final List<FileSystemEntity> entities =
+          await dir.list(recursive: false).toList();
 
+      if (!mounted) return;
       setState(() {
         for (var entity in entities) {
           if (entity is File) {
@@ -93,9 +323,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
             final ext = path.split('.').last.toLowerCase();
 
             if (allExtensions.contains('.$ext')) {
-              // Check if already in DB
               final existsInDb = dbFiles.any((f) => f.path == path);
-              // Check if already in local
               final existsInLocal = _localFiles.any((f) => f.path == path);
 
               if (!existsInDb && !existsInLocal) {
@@ -134,6 +362,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
           _selectedLocalInspectorFile = null;
           _titleController.text = existing.metadataTitle ?? '';
           _keywordsController.text = existing.metadataKeywords ?? '';
+          _metadataDirty = false;
         } else if (local != null) {
           _selectedLocalInspectorFile = local;
           _selectedExistingFile = null;
@@ -203,6 +432,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       setState(() {
         _titleController.text = fetchedTitle;
         _keywordsController.text = keywordsString;
+        _metadataDirty = true;
       });
 
       // Save to DB
@@ -307,6 +537,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                   _keywordsController.text = keywordsString;
                   _selectedExistingFile = newFile;
                   _selectedLocalInspectorFile = null;
+                  _metadataDirty = true;
                 }
                 // Remove from local files if it was there
                 _localFiles.removeWhere((f) => f.path == path);
@@ -354,7 +585,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         keywords: keywords,
       );
 
-      _showSuccess('Changes saved to DB and File.');
+      setState(() => _metadataDirty = false);
+      _showSuccess('Изменения сохранены в БД и в файл.');
     } else if (_selectedLocalInspectorFile != null) {
       final newFile = AppFile(
         id: const Uuid().v4(),
@@ -382,8 +614,45 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         keywords: keywords,
       );
 
-      _showSuccess('New file saved and tagged.');
+      setState(() => _metadataDirty = false);
+      _showSuccess('Файл добавлен в БД и метаданные записаны в файл.');
     }
+  }
+
+  /// Сохраняет метаданные всех файлов во всех рабочих областях (только файлы с заполненными метаданными).
+  Future<void> _saveAllMetadata() async {
+    final workspaces = ref.read(workspacesProvider);
+    final dbFiles = ref.read(filesProvider).value ?? [];
+    if (dbFiles.isEmpty || workspaces.entries.isEmpty) {
+      if (mounted) _showSuccess('Нет файлов с метаданными для сохранения.');
+      return;
+    }
+    final sep = Platform.pathSeparator;
+    final toSave = <AppFile>[];
+    for (final entry in workspaces.entries) {
+      final wp = entry.path;
+      final prefix = wp.endsWith(sep) ? wp : wp + sep;
+      for (final f in dbFiles) {
+        if (f.path != wp && !f.path.startsWith(prefix)) continue;
+        final hasMeta = (f.metadataTitle != null && f.metadataTitle!.trim().isNotEmpty) ||
+            (f.metadataKeywords != null && f.metadataKeywords!.trim().isNotEmpty);
+        if (hasMeta) toSave.add(f);
+      }
+    }
+    if (toSave.isEmpty) {
+      if (mounted) _showSuccess('Нет файлов с метаданными для сохранения.');
+      return;
+    }
+    int saved = 0;
+    for (final f in toSave) {
+      final ok = await MetadataService.writeMetadata(
+        filePath: f.path,
+        title: f.metadataTitle?.trim() ?? '',
+        keywords: f.metadataKeywords?.trim() ?? '',
+      );
+      if (ok) saved++;
+    }
+    if (mounted) _showSuccess('Сохранить все: записано $saved из ${toSave.length} файлов.');
   }
 
   void _showSuccess(String message) {
@@ -393,6 +662,290 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         content: Text(message),
         backgroundColor: isDark ? AppTheme.successColorDark : AppTheme.successColor,
         behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Widget _buildMultiSelectPanel(ColorScheme colorScheme) {
+    final dbFiles = ref.read(filesProvider).value ?? [];
+    final paths = _selectedPaths.toList();
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        Text(
+          'Выбрано: ${paths.length}',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: colorScheme.onSurface.withValues(alpha: 0.8),
+          ),
+        ),
+        const SizedBox(height: 12),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            const crossAxisCount = 3;
+            const spacing = 6.0;
+            final size = (constraints.maxWidth - spacing * (crossAxisCount - 1)) / crossAxisCount;
+            return Wrap(
+              spacing: spacing,
+              runSpacing: spacing,
+              children: paths.map((path) {
+                return SizedBox(
+                  width: size,
+                  height: size,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: _thumbnailForPath(context, path),
+                  ),
+                );
+              }).toList(),
+            );
+          },
+        ),
+        const SizedBox(height: 16),
+        Text(
+          'Кнопка «AI Tag» в левой панели — генерация тегов для всех выбранных',
+          style: TextStyle(
+            fontSize: 11,
+            color: colorScheme.onSurface.withValues(alpha: 0.5),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Миниатюра по пути файла. На macOS требует удержания security-scoped доступа
+  /// для текущей рабочей области (_currentScopedResource в _loadCurrentWorkspaceFiles).
+  Widget _thumbnailForPath(BuildContext context, String path) {
+    final cs = Theme.of(context).colorScheme;
+    final isVideo = ['.mp4', '.mov', '.avi', '.mkv', '.m4v']
+        .any((e) => path.toLowerCase().endsWith(e));
+    if (isVideo) {
+      return Container(
+        color: cs.surfaceContainerHighest,
+        child: Icon(Icons.videocam, color: cs.primary.withValues(alpha: 0.5)),
+      );
+    }
+    return Image.file(
+      File(path),
+      fit: BoxFit.cover,
+    );
+  }
+
+  Widget _buildTopBar(ColorScheme colorScheme) {
+    final workspacePath = ref.watch(workspacesProvider).currentPath;
+    final folderName = workspacePath == null || workspacePath.isEmpty
+        ? ''
+        : workspacePath.split(Platform.pathSeparator).last;
+    return ref.watch(filesProvider).when(
+          data: (dbFiles) {
+            final sep = Platform.pathSeparator;
+            final dbCount = workspacePath == null || workspacePath.isEmpty
+                ? 0
+                : dbFiles
+                    .where((f) =>
+                        f.path == workspacePath ||
+                        f.path.startsWith(workspacePath + sep))
+                    .length;
+            final total = dbCount + _localFiles.length;
+            return Container(
+              height: 48,
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerLow.withValues(alpha: 0.5),
+                border: Border(
+                  bottom: BorderSide(color: colorScheme.outlineVariant),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.folder_outlined,
+                    size: 20,
+                    color: colorScheme.primary,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    folderName.isEmpty ? '—' : folderName,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(width: 20),
+                  Text(
+                    'Файлов: $total',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: colorScheme.onSurface.withValues(alpha: 0.7),
+                    ),
+                  ),
+                  const Spacer(),
+                  if (_isLoading && _batchTotal > 0)
+                    Text(
+                      'Обработка: $_batchDone / $_batchTotal',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: colorScheme.primary,
+                      ),
+                    ),
+                ],
+              ),
+            );
+          },
+          loading: () => Container(
+            height: 48,
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: colorScheme.outlineVariant),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.folder_outlined, size: 20, color: colorScheme.outline),
+                const SizedBox(width: 10),
+                Text(
+                  folderName.isEmpty ? '—' : folderName,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: colorScheme.onSurface.withValues(alpha: 0.6),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          error: (_, __) => const SizedBox.shrink(),
+        );
+  }
+
+  Widget _buildToolsBar(ColorScheme colorScheme) {
+    final workspaces = ref.watch(workspacesProvider);
+    final dbFiles = ref.watch(filesProvider).value ?? [];
+    final sep = Platform.pathSeparator;
+    int saveAllCount = 0;
+    for (final entry in workspaces.entries) {
+      final wp = entry.path;
+      final prefix = wp.endsWith(sep) ? wp : wp + sep;
+      for (final f in dbFiles) {
+        if (f.path != wp && !f.path.startsWith(prefix)) continue;
+        final hasMeta = (f.metadataTitle != null && f.metadataTitle!.trim().isNotEmpty) ||
+            (f.metadataKeywords != null && f.metadataKeywords!.trim().isNotEmpty);
+        if (hasMeta) saveAllCount++;
+      }
+    }
+    final hasSelection = _selectedExistingFile != null || _selectedLocalInspectorFile != null;
+    final saveCount = (_metadataDirty && hasSelection) ? 1 : 0;
+
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLow.withValues(alpha: 0.3),
+        border: Border(
+          bottom: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+        ),
+      ),
+      child: Row(
+        children: [
+          Tooltip(
+            message: _selectedPaths.isEmpty ? 'Выделить всё' : 'Снять выделение',
+            child: IconButton(
+              onPressed: () {
+                final wp = ref.read(workspacesProvider).currentPath;
+                final sep = Platform.pathSeparator;
+                ref.read(filesProvider).whenData((dbFiles) {
+                  final dbInWorkspace = wp == null || wp.isEmpty
+                      ? <AppFile>[]
+                      : dbFiles
+                          .where((f) =>
+                              f.path == wp || f.path.startsWith(wp + sep))
+                          .toList();
+                  _selectAll(dbInWorkspace, _localFiles);
+                });
+              },
+              icon: Icon(
+                _selectedPaths.isEmpty ? Icons.select_all : Icons.deselect,
+                size: 22,
+                color: colorScheme.primary,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Tooltip(
+            message: 'AI Tag — генерация тегов для выбранных',
+            child: IconButton(
+              onPressed: _selectedPaths.isEmpty
+                  ? null
+                  : () {
+                      if (_selectedPaths.length > 1) {
+                        _generateBatchAI();
+                      } else {
+                        _generateAI();
+                      }
+                    },
+              icon: Icon(
+                Icons.auto_awesome,
+                size: 22,
+                color: _selectedPaths.isEmpty
+                    ? colorScheme.onSurface.withValues(alpha: 0.4)
+                    : colorScheme.primary,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Tooltip(
+            message: 'Снять выделение',
+            child: IconButton(
+              onPressed: _selectedPaths.isEmpty
+                  ? null
+                  : () {
+                      setState(() {
+                        _selectedPaths.clear();
+                        _selectedExistingFile = null;
+                        _selectedLocalInspectorFile = null;
+                      });
+                    },
+              icon: Icon(
+                Icons.delete_outline,
+                size: 22,
+                color: _selectedPaths.isEmpty
+                    ? colorScheme.onSurface.withValues(alpha: 0.4)
+                    : colorScheme.primary,
+              ),
+            ),
+          ),
+          const SizedBox(width: 16),
+          // Сохранить все — метаданные всех рабочих областей
+          Tooltip(
+            message: 'Сохранить метаданные всех файлов во всех рабочих областях',
+            child: FilledButton.icon(
+              onPressed: saveAllCount > 0 ? _saveAllMetadata : null,
+              icon: const Icon(Icons.save, size: 18),
+              label: Text('Сохранить все ($saveAllCount)'),
+              style: FilledButton.styleFrom(
+                backgroundColor: saveAllCount > 0 ? colorScheme.primary : null,
+                foregroundColor: saveAllCount > 0 ? colorScheme.onPrimary : null,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Сохранить — только выбранный файл с несохранёнными изменениями
+          Tooltip(
+            message: 'Сохранить метаданные выбранного файла в БД и в файл',
+            child: FilledButton.icon(
+              onPressed: saveCount > 0 ? _saveChanges : null,
+              icon: const Icon(Icons.save_outlined, size: 18),
+              label: Text('Сохранить ($saveCount)'),
+              style: FilledButton.styleFrom(
+                backgroundColor: saveCount > 0 ? colorScheme.primaryContainer : null,
+                foregroundColor: saveCount > 0 ? colorScheme.onPrimaryContainer : null,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -413,174 +966,34 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final currentPath = ref.watch(workspacesProvider).currentPath;
+
+    ref.listen(workspacesProvider, (prev, next) {
+      if (prev?.currentPath != next.currentPath) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _loadCurrentWorkspaceFiles();
+          setState(() {
+            _selectedPaths.clear();
+            _selectedExistingFile = null;
+            _selectedLocalInspectorFile = null;
+          });
+        });
+      }
+    });
+    ref.listen(refreshWorkspaceProvider, (prev, next) {
+      if (next > 0 && currentPath != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _refreshCurrentWorkspace());
+      }
+    });
 
     return Row(
       children: [
-        // Left Action Panel
-        Container(
-          width: 72,
-          decoration: BoxDecoration(
-            color: colorScheme.surface,
-            border: Border(right: BorderSide(color: colorScheme.outline)),
-          ),
-          child: Column(
-            children: [
-              const SizedBox(height: 16),
-              _SideActionIcon(
-                icon: _selectedPaths.isEmpty
-                    ? Icons.select_all
-                    : Icons.deselect,
-                label: _selectedPaths.isEmpty ? 'All' : 'None',
-                onTap: () {
-                  final filesState = ref.read(filesProvider);
-                  filesState.whenData((dbFiles) {
-                    _selectAll(dbFiles, _localFiles);
-                  });
-                },
-              ),
-              const SizedBox(height: 16),
-              _SideActionIcon(
-                icon: Icons.auto_awesome,
-                label: 'AI Tag',
-                isActive: _selectedPaths.isNotEmpty,
-                onTap: () {
-                  if (_selectedPaths.length > 1) {
-                    _generateBatchAI();
-                  } else {
-                    _generateAI();
-                  }
-                },
-              ),
-              const SizedBox(height: 16),
-              _SideActionIcon(
-                icon: Icons.delete_outline,
-                label: 'Clear',
-                isActive: _selectedPaths.isNotEmpty,
-                onTap: () {
-                  setState(() {
-                    _selectedPaths.clear();
-                    _selectedExistingFile = null;
-                    _selectedLocalInspectorFile = null;
-                  });
-                },
-              ),
-              const Spacer(),
-              _SideActionIcon(
-                icon: Icons.settings_outlined,
-                label: 'Settings',
-                onTap: () {
-                  ref.read(navigationProvider.notifier).setIndex(4);
-                },
-              ),
-              const SizedBox(height: 16),
-            ],
-          ),
-        ),
-
-        // Main Content Area (Middle)
+        // Основная область: верхняя панель (папка + счётчик) + панель инструментов + сетка
         Expanded(
           child: Column(
             children: [
-              // Header Toolbar
-              Container(
-                height: 64,
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                decoration: BoxDecoration(
-                  color: colorScheme.surface,
-                  border: Border(
-                    bottom: BorderSide(color: colorScheme.outline),
-                  ),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    // Breadcrumbs
-                    Row(
-                      children: [
-                        Text(
-                          'Workspace',
-                          style: TextStyle(
-                            color: colorScheme.onSurface.withValues(alpha: 0.6),
-                          ),
-                        ),
-                        Icon(
-                          Icons.chevron_right,
-                          size: 16,
-                          color: colorScheme.onSurface.withValues(alpha: 0.4),
-                        ),
-                        Text(
-                          'Images',
-                          style: TextStyle(
-                            color: colorScheme.onSurface.withValues(alpha: 0.6),
-                          ),
-                        ),
-                        Icon(
-                          Icons.chevron_right,
-                          size: 16,
-                          color: colorScheme.onSurface.withValues(alpha: 0.4),
-                        ),
-                        Text(
-                          'Library',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: colorScheme.onSurface,
-                          ),
-                        ),
-                        if (_selectedPaths.isNotEmpty) ...[
-                          const SizedBox(width: 12),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: colorScheme.primaryContainer,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              '${_selectedPaths.length} selected',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: colorScheme.onPrimaryContainer,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    // Actions
-                    Row(
-                      children: [
-                        if (_isLoading && _batchTotal > 0)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 16),
-                            child: Text(
-                              'Processing: $_batchDone / $_batchTotal',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: colorScheme.primary,
-                              ),
-                            ),
-                          ),
-                        OutlinedButton.icon(
-                          onPressed: _pickFile,
-                          icon: const Icon(Icons.add, size: 18),
-                          label: const Text('Import'),
-                          style: OutlinedButton.styleFrom(
-                            side: BorderSide(color: colorScheme.outline),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-
+              _buildTopBar(colorScheme),
+              _buildToolsBar(colorScheme),
               // Grid Area
               Expanded(
                 child: DropTarget(
@@ -641,15 +1054,52 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                           error: (e, _) =>
                               Center(child: Text('Failed to load files: $e')),
                           data: (dbFiles) {
-                            // Filter local files that might have been added to DB in the meantime
+                            final sep = Platform.pathSeparator;
+                            final workspacePath =
+                                ref.read(workspacesProvider).currentPath;
+                            final dbFilesInWorkspace = workspacePath == null ||
+                                    workspacePath.isEmpty
+                                ? <AppFile>[]
+                                : dbFiles.where((f) {
+                                    final p = f.path;
+                                    return p == workspacePath ||
+                                        p.startsWith(workspacePath + sep);
+                                  }).toList();
+
                             final currentLocalFiles = _localFiles
                                 .where(
-                                  (lf) =>
-                                      !dbFiles.any((df) => df.path == lf.path),
+                                  (lf) => !dbFilesInWorkspace
+                                      .any((df) => df.path == lf.path),
                                 )
                                 .toList();
 
-                            if (dbFiles.isEmpty && currentLocalFiles.isEmpty) {
+                            if (workspacePath == null ||
+                                workspacePath.isEmpty) {
+                              return Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.folder_open_outlined,
+                                      size: 64,
+                                      color: colorScheme.outline,
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      'Выберите папку в списке слева\nили нажмите «Добавить папку»',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        color: colorScheme.onSurface
+                                            .withValues(alpha: 0.6),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }
+
+                            if (dbFilesInWorkspace.isEmpty &&
+                                currentLocalFiles.isEmpty) {
                               return Center(
                                 child: Column(
                                   mainAxisSize: MainAxisSize.min,
@@ -661,17 +1111,19 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                                     ),
                                     const SizedBox(height: 16),
                                     Text(
-                                      'No images in workspace.',
+                                      'В этой папке нет изображений.\nНажмите «Обновить» в левой панели.\nЕсли файлы есть — выдайте приложению доступ к диску\n(Системные настройки → Конфиденциальность → Полный доступ к диску).',
+                                      textAlign: TextAlign.center,
                                       style: TextStyle(
-                                        color: colorScheme.onSurface.withValues(
-                                          alpha: 0.5,
-                                        ),
+                                        fontSize: 13,
+                                        color: colorScheme.onSurface
+                                            .withValues(alpha: 0.6),
                                       ),
                                     ),
                                     const SizedBox(height: 16),
-                                    OutlinedButton(
+                                    OutlinedButton.icon(
                                       onPressed: _pickFile,
-                                      child: const Text('Select a File'),
+                                      icon: const Icon(Icons.add, size: 18),
+                                      label: const Text('Добавить папку'),
                                     ),
                                   ],
                                 ),
@@ -687,10 +1139,9 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                                     mainAxisSpacing: 16,
                                     childAspectRatio: 0.85,
                                   ),
-                              itemCount:
-                                  currentLocalFiles.length + dbFiles.length,
+                              itemCount: currentLocalFiles.length +
+                                  dbFilesInWorkspace.length,
                               itemBuilder: (context, index) {
-                                // Draw local drop file first
                                 if (index < currentLocalFiles.length) {
                                   final file = currentLocalFiles[index];
                                   return _GridCard(
@@ -709,9 +1160,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                                   );
                                 }
 
-                                // Draw DB files
                                 final dbIdx = index - currentLocalFiles.length;
-                                final appFile = dbFiles[dbIdx];
+                                final appFile = dbFilesInWorkspace[dbIdx];
                                 final isSelected = _selectedPaths.contains(
                                   appFile.path,
                                 );
@@ -742,7 +1192,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
           ),
         ),
 
-        // Right Inspector Panel
+        // Right Panel (IMS-style: miniatures when multi, one image + tags when single)
         Container(
           width: 320,
           decoration: BoxDecoration(
@@ -752,10 +1202,9 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Inspector Header
               Container(
-                height: 64,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                height: 48,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
                 decoration: BoxDecoration(
                   border: Border(
                     bottom: BorderSide(color: colorScheme.outlineVariant),
@@ -764,41 +1213,45 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'Inspector',
-                      style: TextStyle(
+                    Text(
+                      _selectedPaths.isEmpty
+                          ? 'Детали'
+                          : _selectedPaths.length == 1
+                              ? 'Изображение'
+                              : 'Выбрано',
+                      style: const TextStyle(
                         fontWeight: FontWeight.bold,
-                        fontSize: 16,
+                        fontSize: 14,
                       ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.close, size: 20),
-                      onPressed: () {
-                        setState(() {
-                          _selectedExistingFile = null;
-                          _selectedLocalInspectorFile = null;
-                        });
-                      },
-                    ),
+                    if (_selectedPaths.isNotEmpty)
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 20),
+                        onPressed: () {
+                          setState(() {
+                            _selectedPaths.clear();
+                            _selectedExistingFile = null;
+                            _selectedLocalInspectorFile = null;
+                          });
+                        },
+                      ),
                   ],
                 ),
               ),
-
-              // Inspector Content
               Expanded(
-                child:
-                    (_selectedLocalInspectorFile == null &&
-                        _selectedExistingFile == null)
+                child: _selectedPaths.isEmpty
                     ? Center(
                         child: Text(
-                          'Select an image\nto view details.',
+                          'Выберите изображение',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             color: colorScheme.onSurface.withValues(alpha: 0.5),
                           ),
                         ),
                       )
-                    : ListView(
+                    : _selectedPaths.length > 1
+                        ? _buildMultiSelectPanel(colorScheme)
+                        : ListView(
                         padding: const EdgeInsets.all(16),
                         children: [
                           // Image Preview
@@ -893,32 +1346,35 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                             controller: _titleController,
                             decoration: _inputDecoration(context),
                             style: const TextStyle(fontSize: 14),
+                            onChanged: (_) => setState(() => _metadataDirty = true),
                           ),
 
                           const SizedBox(height: 16),
+                          _FormLabel('KEYWORDS'),
+                          const SizedBox(height: 6),
                           Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              _FormLabel('KEYWORDS'),
-                              InkWell(
-                                onTap: _generateAI,
-                                child: Text(
-                                  'GENERATE AI',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    color: colorScheme.primary,
+                              Expanded(
+                                child: FilledButton.icon(
+                                  onPressed: _isLoading ? null : _generateAI,
+                                  icon: const Icon(Icons.auto_awesome, size: 18),
+                                  label: const Text('Генерация AI'),
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: colorScheme.primary,
+                                    foregroundColor: colorScheme.onPrimary,
                                   ),
                                 ),
                               ),
                             ],
                           ),
                           const SizedBox(height: 6),
+                          const SizedBox(height: 6),
                           TextField(
                             controller: _keywordsController,
                             maxLines: 4,
                             decoration: _inputDecoration(context),
                             style: const TextStyle(fontSize: 14, height: 1.5),
+                            onChanged: (_) => setState(() => _metadataDirty = true),
                           ),
                           if (_isLoading)
                             const Padding(
@@ -1056,15 +1512,12 @@ class _GridCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
             color: isSelected
@@ -1178,7 +1631,6 @@ class _GridCard extends StatelessWidget {
             ],
           ),
         ),
-        ),
       ),
     );
   }
@@ -1205,13 +1657,10 @@ class _SideActionIcon extends StatelessWidget {
       opacity: isActive ? 1.0 : 0.4,
       child: Tooltip(
         message: label,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
+        child: InkWell(
           onTap: isActive ? onTap : null,
-          child: InkWell(
-            onTap: isActive ? onTap : null,
-            borderRadius: BorderRadius.circular(8),
-            child: Column(
+          borderRadius: BorderRadius.circular(8),
+          child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(icon, size: 24, color: colorScheme.primary),
@@ -1228,7 +1677,6 @@ class _SideActionIcon extends StatelessWidget {
             ),
           ),
         ),
-      ),
     );
   }
 }
