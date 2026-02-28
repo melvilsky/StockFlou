@@ -97,7 +97,7 @@ class _MainShellState extends ConsumerState<MainShell> {
                         ),
                         const SizedBox(width: 8),
                         const Text(
-                          'StockFlow',
+                          'StockFlou',
                           style: TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
@@ -212,11 +212,14 @@ class _SidebarItem extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(8),
           hoverColor: isSelected ? selectedBg : unselectedHover,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -244,6 +247,7 @@ class _SidebarItem extends StatelessWidget {
               ],
             ),
           ),
+        ),
         ),
       ),
     );

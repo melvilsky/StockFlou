@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../core/theme/app_theme.dart';
 
 class HistoryScreen extends StatelessWidget {
   const HistoryScreen({super.key});
@@ -39,11 +40,11 @@ class HistoryScreen extends StatelessWidget {
             margin: const EdgeInsets.symmetric(vertical: 10),
             child: OutlinedButton.icon(
               onPressed: () {},
-              icon: const Icon(Icons.pause, size: 16, color: Colors.black87),
-              label: const Text(
+              icon: Icon(Icons.pause, size: 16, color: colorScheme.onSurface),
+              label: Text(
                 'Pause',
                 style: TextStyle(
-                  color: Colors.black87,
+                  color: colorScheme.onSurface,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -57,31 +58,33 @@ class HistoryScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          Container(
-            height: 36,
-            margin: const EdgeInsets.symmetric(vertical: 10),
-            child: TextButton.icon(
-              onPressed: () {},
-              icon: const Icon(
-                Icons.cancel_outlined,
-                size: 16,
-                color: Colors.red,
-              ),
-              label: const Text(
-                'Cancel All',
-                style: TextStyle(
-                  color: Colors.red,
-                  fontWeight: FontWeight.w600,
+          Builder(
+            builder: (context) {
+              final isDark = Theme.of(context).brightness == Brightness.dark;
+              final destructiveColor = isDark ? AppTheme.errorColorDark : AppTheme.errorColor;
+              return Container(
+                height: 36,
+                margin: const EdgeInsets.symmetric(vertical: 10),
+                child: TextButton.icon(
+                  onPressed: () {},
+                  icon: Icon(Icons.cancel_outlined, size: 16, color: destructiveColor),
+                  label: Text(
+                    'Cancel All',
+                    style: TextStyle(
+                      color: destructiveColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  style: TextButton.styleFrom(
+                    backgroundColor: destructiveColor.withValues(alpha: 0.1),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                  ),
                 ),
-              ),
-              style: TextButton.styleFrom(
-                backgroundColor: Colors.red.withValues(alpha: 0.1),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-              ),
-            ),
+              );
+            },
           ),
           const SizedBox(width: 24),
         ],
@@ -170,7 +173,7 @@ class HistoryScreen extends StatelessWidget {
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
                               color: colorScheme.onSurface.withValues(
-                                alpha: 0.2,
+                                alpha: 0.65,
                               ),
                             ),
                           ),

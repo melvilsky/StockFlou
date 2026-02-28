@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pool/pool.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../../core/theme/app_theme.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/services/metadata_service.dart';
 import '../../../core/state/files_provider.dart';
@@ -53,7 +54,13 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
   }
 
   Future<void> _pickFile() async {
-    final String? directoryPath = await getDirectoryPath();
+    String? directoryPath;
+    try {
+      directoryPath = await getDirectoryPath();
+    } catch (e) {
+      _showError('Failed to open folder picker: $e');
+      return;
+    }
 
     if (directoryPath == null) {
       // User cancelled
@@ -380,18 +387,25 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
   }
 
   void _showSuccess(String message) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: Colors.green.shade700),
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isDark ? AppTheme.successColorDark : AppTheme.successColor,
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 
   void _showError(String message) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: SelectableText('Error: $message'),
-        backgroundColor: Colors.red.shade800,
+        backgroundColor: isDark ? AppTheme.errorColorDark : AppTheme.errorColor,
         duration: const Duration(minutes: 60),
         showCloseIcon: true,
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }
@@ -837,29 +851,35 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                                   ],
                                 ),
                               ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: (_keywordsController.text.isEmpty)
-                                      ? Colors.amber.withValues(alpha: 0.2)
-                                      : Colors.green.withValues(alpha: 0.2),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  _keywordsController.text.isEmpty
-                                      ? 'Untagged'
-                                      : 'Tagged',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: _keywordsController.text.isEmpty
-                                        ? Colors.amber.shade800
-                                        : Colors.green.shade700,
-                                  ),
-                                ),
+                              Builder(
+                                builder: (context) {
+                                  final isDark = Theme.of(context).brightness == Brightness.dark;
+                                  final isEmpty = _keywordsController.text.isEmpty;
+                                  final bgColor = isEmpty
+                                      ? AppTheme.warningColor.withValues(alpha: 0.2)
+                                      : AppTheme.successColor.withValues(alpha: 0.2);
+                                  final fgColor = isEmpty
+                                      ? (isDark ? AppTheme.warningColorDark : AppTheme.warningColor)
+                                      : (isDark ? AppTheme.successColorDark : AppTheme.successColor);
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: bgColor,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      isEmpty ? 'Untagged' : 'Tagged',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: fgColor,
+                                      ),
+                                    ),
+                                  );
+                                },
                               ),
                             ],
                           ),
@@ -1036,29 +1056,34 @@ class _GridCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    return InkWell(
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? colorScheme.primary.withValues(alpha: 0.05)
-              : Colors.transparent,
-          border: Border.all(
-            color: isSelected
-                ? colorScheme.primary.withValues(alpha: 0.3)
-                : Colors.transparent,
-            width: 1,
-          ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
           borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Builder(
-                builder: (context) {
+          child: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+            color: isSelected
+                ? colorScheme.primary.withValues(alpha: 0.05)
+                : Colors.transparent,
+            border: Border.all(
+              color: isSelected
+                  ? colorScheme.primary.withValues(alpha: 0.3)
+                  : Colors.transparent,
+              width: 1,
+            ),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Builder(
+                  builder: (context) {
                   final videoExtensions = [
                     '.mp4',
                     '.mov',
@@ -1111,38 +1136,48 @@ class _GridCard extends StatelessWidget {
                       ],
                     ),
                   );
-                },
+                  },
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              filename,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: isTagged ? Colors.green : Colors.amber,
-                    shape: BoxShape.circle,
+                const SizedBox(height: 8),
+              Text(
+                filename,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Builder(
+                    builder: (context) {
+                      final isDark = Theme.of(context).brightness == Brightness.dark;
+                      final dotColor = isTagged
+                          ? (isDark ? AppTheme.successColorDark : AppTheme.successColor)
+                          : (isDark ? AppTheme.warningColorDark : AppTheme.warningColor);
+                      return Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: dotColor,
+                          shape: BoxShape.circle,
+                        ),
+                      );
+                    },
                   ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  isTagged ? 'Tagged' : 'Untagged',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: colorScheme.onSurface.withValues(alpha: 0.6),
+                  const SizedBox(width: 6),
+                  Text(
+                    isTagged ? 'Tagged' : 'Untagged',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: colorScheme.onSurface.withValues(alpha: 0.6),
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+            ],
+          ),
+        ),
         ),
       ),
     );
@@ -1170,23 +1205,27 @@ class _SideActionIcon extends StatelessWidget {
       opacity: isActive ? 1.0 : 0.4,
       child: Tooltip(
         message: label,
-        child: InkWell(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
           onTap: isActive ? onTap : null,
-          borderRadius: BorderRadius.circular(8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 24, color: colorScheme.primary),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.onSurface,
+          child: InkWell(
+            onTap: isActive ? onTap : null,
+            borderRadius: BorderRadius.circular(8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 24, color: colorScheme.primary),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.onSurface,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -1256,7 +1295,7 @@ class _StockStatusCard extends StatelessWidget {
           Icon(
             isUploaded ? Icons.check_circle : Icons.check_circle_outline,
             color: isUploaded
-                ? Colors.green
+                ? (isDark ? AppTheme.successColorDark : AppTheme.successColor)
                 : colorScheme.onSurface.withValues(alpha: 0.3),
             size: 18,
           ),

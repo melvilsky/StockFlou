@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_selector/file_selector.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/state/settings_provider.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -48,9 +49,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         .read(settingsProvider.notifier)
         .setWorkspacePath(_workspaceController.text);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Settings saved successfully.'),
-        backgroundColor: Colors.green,
+      SnackBar(
+        content: const Text('Settings saved successfully.'),
+        backgroundColor: AppTheme.successColor,
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }

@@ -17,6 +17,14 @@ class AppTheme {
   static const borderLight = Color(0xFFE2E8F0); // slate-200
   static const borderDark = Color(0xFF1E293B); // slate-800
 
+  // Семантические цвета (единые для SnackBar, статусов, бейджей)
+  static const successColor = Color(0xFF15803D); // green-700
+  static const successColorDark = Color(0xFF4ADE80); // green-400 для тёмной темы
+  static const errorColor = Color(0xFFB91C1C); // red-700
+  static const errorColorDark = Color(0xFFF87171); // red-400 для тёмной темы
+  static const warningColor = Color(0xFFB45309); // amber-700
+  static const warningColorDark = Color(0xFFFBBF24); // amber-400 для тёмной темы
+
   static ThemeData get lightTheme {
     return ThemeData(
       useMaterial3: true,
