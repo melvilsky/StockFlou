@@ -111,6 +111,7 @@ class GenerationGridCard extends StatelessWidget {
                           AnimatedContainer(
                             duration: const Duration(milliseconds: 150),
                             decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
                               border: Border.all(
                                 color: isSelected
                                     ? colorScheme.primary
