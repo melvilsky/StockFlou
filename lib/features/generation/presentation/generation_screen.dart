@@ -1168,26 +1168,53 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
           builder: (context, setState) {
             return AlertDialog(
               title: const Text('Перегенерировать теги?'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Файл "$filename" уже содержит метаданные. Заменить их?',
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Checkbox(
-                        value: applyToAll,
-                        onChanged: (val) {
-                          setState(() => applyToAll = val ?? false);
-                        },
+              content: SizedBox(
+                width: 400, // Strict max width for better design
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Файл "$filename" уже содержит метаданные. Заменить их?',
+                      style: const TextStyle(fontSize: 14),
+                    ),
+                    const SizedBox(height: 20),
+                    InkWell(
+                      onTap: () {
+                        setState(() => applyToAll = !applyToAll);
+                      },
+                      borderRadius: BorderRadius.circular(4),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 4.0,
+                          horizontal: 4.0,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: Checkbox(
+                                value: applyToAll,
+                                onChanged: (val) {
+                                  setState(() => applyToAll = val ?? false);
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            const Expanded(
+                              child: Text(
+                                'Применить ко всем оставшимся файлам',
+                                style: TextStyle(fontSize: 13),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      const Text('Применить ко всем оставшимся файлам'),
-                    ],
-                  ),
-                ],
+                    ),
+                  ],
+                ),
               ),
               actions: [
                 TextButton(
