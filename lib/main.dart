@@ -129,6 +129,10 @@ class _MainShellState extends ConsumerState<MainShell> {
                 if (currentIndex == NavigationTab.workspace)
                   _buildWorkspacesBlock(context, colorScheme, ref),
 
+                // Меню настроек — только в разделе «Настройки»
+                if (currentIndex == NavigationTab.settings)
+                  _buildSettingsSidebarBlock(context, colorScheme, ref),
+
                 const Spacer(),
 
                 // Разделы и настройки — компактная горизонтальная панель внизу
@@ -208,6 +212,111 @@ class _MainShellState extends ConsumerState<MainShell> {
                 SettingsScreen(), // settings
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSettingsSidebarBlock(
+    BuildContext context,
+    ColorScheme colorScheme,
+    WidgetRef ref,
+  ) {
+    final currentTab = ref.watch(settingsTabProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final blockBg = isDark
+        ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
+        : colorScheme.surfaceContainerLow;
+
+    Widget buildItem(SettingsTab tab, String title, IconData icon) {
+      final isSelected = currentTab == tab;
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Material(
+          color: Colors.transparent,
+          child: SingleClickArea(
+            onTap: () {
+              ref.read(settingsTabProvider.notifier).setTab(tab);
+            },
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? colorScheme.primary.withValues(alpha: 0.15)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      icon,
+                      size: 16,
+                      color: isSelected
+                          ? colorScheme.primary
+                          : colorScheme.onSurface.withValues(alpha: 0.7),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: isSelected
+                              ? FontWeight.w600
+                              : FontWeight.w500,
+                          color: isSelected
+                              ? colorScheme.primary
+                              : colorScheme.onSurface.withValues(alpha: 0.8),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: blockBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: colorScheme.outline.withValues(alpha: 0.2),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Настройки',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+              color: colorScheme.onSurface.withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(height: 10),
+          buildItem(SettingsTab.general, 'Общие', Icons.settings_outlined),
+          buildItem(
+            SettingsTab.stocks,
+            'Стоки (FTP)',
+            Icons.cloud_upload_outlined,
           ),
         ],
       ),

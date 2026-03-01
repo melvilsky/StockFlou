@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/state/settings_provider.dart';
 import '../../models/stock_credentials.dart';
+import '../../core/state/navigation_provider.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -64,11 +65,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  int _selectedIndex = 0;
-
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final currentTab = ref.watch(settingsTabProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -83,40 +83,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           child: Container(color: colorScheme.outline, height: 1),
         ),
       ),
-      body: Row(
-        children: [
-          // Sidebar Tabs
-          NavigationRail(
-            selectedIndex: _selectedIndex,
-            onDestinationSelected: (int index) {
-              setState(() {
-                _selectedIndex = index;
-              });
-            },
-            labelType: NavigationRailLabelType.all,
-            backgroundColor: colorScheme.surface,
-            destinations: const [
-              NavigationRailDestination(
-                icon: Icon(Icons.settings_outlined),
-                selectedIcon: Icon(Icons.settings),
-                label: Text('General'),
-              ),
-              NavigationRailDestination(
-                icon: Icon(Icons.cloud_upload_outlined),
-                selectedIcon: Icon(Icons.cloud_upload),
-                label: Text('Stocks'),
-              ),
-            ],
-          ),
-          const VerticalDivider(thickness: 1, width: 1),
-          // Content Area
-          Expanded(
-            child: IndexedStack(
-              index: _selectedIndex,
-              children: [_buildGeneralTab(context), _buildStocksTab(context)],
-            ),
-          ),
-        ],
+      body: IndexedStack(
+        index: currentTab.index,
+        children: [_buildGeneralTab(context), _buildStocksTab(context)],
       ),
     );
   }

@@ -40,3 +40,18 @@ final navigationProvider = NotifierProvider<NavigationNotifier, NavigationTab>(
 final initialNavigationIndexProvider = FutureProvider<NavigationTab>((ref) {
   return NavigationNotifier.loadSavedTab();
 });
+
+enum SettingsTab { general, stocks }
+
+class SettingsTabNotifier extends Notifier<SettingsTab> {
+  @override
+  SettingsTab build() => SettingsTab.general;
+
+  void setTab(SettingsTab tab) {
+    state = tab;
+  }
+}
+
+final settingsTabProvider = NotifierProvider<SettingsTabNotifier, SettingsTab>(
+  () => SettingsTabNotifier(),
+);
