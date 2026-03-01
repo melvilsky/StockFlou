@@ -102,6 +102,7 @@ class WorkspacesNotifier extends Notifier<WorkspacesState> {
 
     List<WorkspaceEntry> valid = [];
     for (final entry in entries) {
+      bool exists = false;
       if (entry.bookmark != null && Platform.isMacOS) {
         try {
           final entity = await _secureBookmarks.resolveBookmark(
@@ -111,37 +112,42 @@ class WorkspacesNotifier extends Notifier<WorkspacesState> {
           final started = await _secureBookmarks
               .startAccessingSecurityScopedResource(entity);
           try {
-            if (started && await entity.exists()) valid.add(entry);
+            if (started && await entity.exists()) {
+              exists = true;
+            }
           } finally {
-            if (started)
+            if (started) {
               await _secureBookmarks.stopAccessingSecurityScopedResource(
                 entity,
               );
+            }
+          }
+        } catch (_) {
+          // If bookmark fails, we'll try the raw path fallback below
+        }
+      }
+
+      // Fallback to raw path check
+      if (!exists) {
+        try {
+          if (await Directory(entry.path).exists()) {
+            exists = true;
           }
         } catch (_) {}
-      } else {
-        try {
-          if (await Directory(entry.path).exists()) valid.add(entry);
-        } catch (_) {}
       }
+
+      // We keep the entry even if it doesn't exist right now,
+      // but we could mark it as invalid in UI if we wanted.
+      // For now, let's at least keep those that existed before.
+      valid.add(entry);
     }
 
     int idx = prefs.getInt(_keyCurrentIndex) ?? 0;
-    if (idx >= entries.length) idx = 0;
-    final currentPath = entries.isNotEmpty && idx < entries.length
-        ? entries[idx].path
-        : null;
-    int newIdx = 0;
-    if (currentPath != null) {
-      final i = valid.indexWhere((e) => e.path == currentPath);
-      if (i >= 0) {
-        newIdx = i;
-      } else if (valid.isNotEmpty) {
-        newIdx = idx < valid.length ? idx : valid.length - 1;
-      }
-    }
-    state = WorkspacesState(entries: valid, currentIndex: newIdx);
-    await _save();
+    if (idx >= valid.length) idx = 0;
+
+    state = WorkspacesState(entries: valid, currentIndex: idx);
+    // Only save if we actually found something to migrate or cleaned up empty paths
+    // but don't save back 'valid' if it's just what we loaded.
   }
 
   Future<void> _save() async {
