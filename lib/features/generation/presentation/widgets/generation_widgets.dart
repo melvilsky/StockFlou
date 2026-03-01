@@ -51,7 +51,6 @@ class GenerationGridCard extends StatelessWidget {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () {}, // только рипл — клик обрабатывает SingleClickArea
           borderRadius: BorderRadius.circular(12),
           child: Container(
             padding: const EdgeInsets.all(8),

@@ -285,7 +285,6 @@ class _MainShellState extends ConsumerState<MainShell> {
                                   .setTab(NavigationTab.workspace);
                             },
                             child: InkWell(
-                              onTap: () {}, // Handled by SingleClickArea
                               borderRadius: BorderRadius.circular(8),
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
@@ -440,7 +439,6 @@ class _SidebarIconItem extends StatelessWidget {
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-            onTap: () {}, // Handled by SingleClickArea
             borderRadius: BorderRadius.circular(compact ? 6 : 8),
             child: Container(
               padding: EdgeInsets.all(padding),
