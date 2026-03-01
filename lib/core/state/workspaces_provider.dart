@@ -161,14 +161,16 @@ class WorkspacesNotifier extends Notifier<WorkspacesState> {
   }
 
   Future<void> addWorkspace(String path) async {
-    final normalized = path.trim().replaceAll(RegExp(r'/+$'), '');
+    // Strip only trailing slashes — do NOT trim() because folder names
+    // may legitimately end with a space (e.g. "Знаки зодиака ").
+    final normalized = path.replaceAll(RegExp(r'/+$'), '');
 
     String? bookmark;
     if (Platform.isMacOS) {
       try {
-        // Используем путь как из пикера (только trim), без обрезки слэша — иначе bookmark может не создаться
-        final pathForBookmark = path.trim();
-        bookmark = await _secureBookmarks.bookmark(Directory(pathForBookmark));
+        // Use the normalized path (without trailing slashes) for bookmark.
+        // Do NOT call trim() — macOS requires the exact directory path.
+        bookmark = await _secureBookmarks.bookmark(Directory(normalized));
       } catch (e) {
         assert(() {
           debugPrint('WorkspacesProvider: не удалось создать bookmark: $e');
