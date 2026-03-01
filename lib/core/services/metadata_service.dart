@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 class MetadataService {
+  static bool _exifDisabledDueToPermissions = false;
+
   /// Writes IPTC/XMP metadata to a file using exiftool.
   /// This assumes exiftool is available in the system PATH.
   static Future<bool> writeMetadata({
@@ -47,6 +49,9 @@ class MetadataService {
   /// Works for both photos (JPEG, PNG) and videos (MOV, MP4).
   static Future<({double? lat, double? lon, DateTime? date, bool hasAudio})>
   readExifLocationAndDate(String filePath) async {
+    if (_exifDisabledDueToPermissions) {
+      return (lat: null, lon: null, date: null, hasAudio: false);
+    }
     try {
       final result = await Process.run('exiftool', [
         '-json',
@@ -107,6 +112,10 @@ class MetadataService {
 
       return (lat: lat, lon: lon, date: date, hasAudio: hasAudio);
     } catch (e) {
+      if (e is ProcessException &&
+          (e.message.contains('Operation not permitted') || e.errorCode == 1)) {
+        _exifDisabledDueToPermissions = true;
+      }
       debugPrint('Error reading EXIF: $e');
       return (lat: null, lon: null, date: null, hasAudio: false);
     }

@@ -29,19 +29,23 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   @override
   void didUpdateWidget(VideoPlayerWidget oldWidget) {
     if (oldWidget.videoPath != widget.videoPath) {
-      _controller.dispose();
       _isInit = false;
-      _initPlayer();
+      _initPlayer(oldController: _controller);
     }
     super.didUpdateWidget(oldWidget);
   }
 
-  Future<void> _initPlayer() async {
-    _controller = VideoPlayerController.file(File(widget.videoPath));
-    // If the play button is needed, handle `initialize()` with catchError if required.
+  Future<void> _initPlayer({VideoPlayerController? oldController}) async {
+    final newController = VideoPlayerController.file(File(widget.videoPath));
+    _controller = newController;
+
+    if (oldController != null) {
+      await oldController.dispose();
+    }
+
     try {
-      await _controller.initialize();
-      if (mounted) {
+      await newController.initialize();
+      if (mounted && _controller == newController) {
         setState(() {
           _isInit = true;
         });

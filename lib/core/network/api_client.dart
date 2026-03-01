@@ -22,7 +22,7 @@ Uint8List? _resizeImageInIsolate(Uint8List bytes) {
 
 class ApiClient {
   static const String _baseUrl =
-      'https://www.aistockkeywords.com/api/public/v1';
+      'https://www.aistockkeywords.com/api/public/v1/';
   final Dio _dio;
   final FcNativeVideoThumbnail _videoThumbnail = FcNativeVideoThumbnail();
 
@@ -104,7 +104,7 @@ class ApiClient {
       };
 
       final response = await _dio.post(
-        '/generate-metadata',
+        'generate-metadata',
         queryParameters: queryParams,
         data: formData,
       );
