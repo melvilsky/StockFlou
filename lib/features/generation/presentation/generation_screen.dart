@@ -16,11 +16,16 @@ import '../../../core/services/geocoding_service.dart';
 import '../../../core/state/files_provider.dart';
 import '../../../core/state/settings_provider.dart';
 import '../../../core/constants/app_constants.dart';
-import '../../../core/widgets/single_click_area.dart';
+
 import 'video_player_widget.dart';
 import '../../../core/state/workspaces_provider.dart';
 import '../../../models/app_file.dart';
 import '../../../models/generation_options.dart';
+import 'widgets/generation_editorial_section.dart';
+import 'widgets/generation_filter_bar.dart';
+import 'widgets/generation_top_bar.dart';
+import 'widgets/generation_tools_bar.dart';
+import 'widgets/generation_widgets.dart';
 
 class GenerationScreen extends ConsumerStatefulWidget {
   const GenerationScreen({super.key});
@@ -987,7 +992,12 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
             );
           },
         ),
-        _buildEditorialSection(context, colorScheme, isMulti: true),
+        GenerationEditorialSection(
+          isMulti: true,
+          selectedPaths: _selectedPaths,
+          selectedExistingFile: _selectedExistingFile,
+          selectedLocalInspectorPath: _selectedLocalInspectorFile?.path,
+        ),
         const SizedBox(height: 16),
         const SizedBox(height: 16),
         Text(
@@ -1019,402 +1029,6 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       );
     }
     return Image.file(File(path), fit: BoxFit.cover);
-  }
-
-  Widget _buildTopBar(ColorScheme colorScheme) {
-    final workspacePath = ref.watch(workspacesProvider).currentPath;
-    final folderName = workspacePath == null || workspacePath.isEmpty
-        ? ''
-        : workspacePath.split(Platform.pathSeparator).last;
-    return ref
-        .watch(filesProvider)
-        .when(
-          data: (dbFiles) {
-            final sep = Platform.pathSeparator;
-            final dbCount = workspacePath == null || workspacePath.isEmpty
-                ? 0
-                : dbFiles
-                      .where(
-                        (f) =>
-                            f.path == workspacePath ||
-                            f.path.startsWith(workspacePath + sep),
-                      )
-                      .length;
-            final total = dbCount + _localFiles.length;
-            return Container(
-              height: 48,
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerLow.withValues(alpha: 0.5),
-                border: Border(
-                  bottom: BorderSide(color: colorScheme.outlineVariant),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.folder_outlined,
-                    size: 20,
-                    color: colorScheme.primary,
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    folderName.isEmpty ? '—' : folderName,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: colorScheme.onSurface,
-                    ),
-                  ),
-                  const SizedBox(width: 20),
-                  Text(
-                    'Файлов: $total',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: colorScheme.onSurface.withValues(alpha: 0.7),
-                    ),
-                  ),
-                  const Spacer(),
-                  if (_isLoading && _batchTotal > 0)
-                    Text(
-                      'Обработка: $_batchDone / $_batchTotal',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: colorScheme.primary,
-                      ),
-                    ),
-                ],
-              ),
-            );
-          },
-          loading: () => Container(
-            height: 48,
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(color: colorScheme.outlineVariant),
-              ),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.folder_outlined,
-                  size: 20,
-                  color: colorScheme.outline,
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  folderName.isEmpty ? '—' : folderName,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: colorScheme.onSurface.withValues(alpha: 0.6),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          error: (_, __) => const SizedBox.shrink(),
-        );
-  }
-
-  Widget _buildToolsBar(ColorScheme colorScheme) {
-    final workspaces = ref.watch(workspacesProvider);
-    final dbFiles = ref.watch(filesProvider).value ?? [];
-    final sep = Platform.pathSeparator;
-    int saveAllCount = 0;
-    for (final entry in workspaces.entries) {
-      final wp = entry.path;
-      final prefix = wp.endsWith(sep) ? wp : wp + sep;
-      for (final f in dbFiles) {
-        if (f.path != wp && !f.path.startsWith(prefix)) continue;
-        if (_isVideoPath(f.path)) continue; // видео не сохраняем в exif
-        final hasMeta =
-            (f.metadataTitle != null && f.metadataTitle!.trim().isNotEmpty) ||
-            (f.metadataKeywords != null &&
-                f.metadataKeywords!.trim().isNotEmpty);
-        if (hasMeta) saveAllCount++;
-      }
-    }
-    final hasSelection =
-        _selectedExistingFile != null || _selectedLocalInspectorFile != null;
-    final focusedPath =
-        _selectedExistingFile?.path ?? _selectedLocalInspectorFile?.path;
-    final isFocusedVideo = focusedPath != null && _isVideoPath(focusedPath);
-    final saveCount = (_metadataDirty && hasSelection && !isFocusedVideo)
-        ? 1
-        : 0;
-
-    return Container(
-      height: 44,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerLow.withValues(alpha: 0.3),
-        border: Border(
-          bottom: BorderSide(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.5),
-          ),
-        ),
-      ),
-      child: Row(
-        children: [
-          Tooltip(
-            message: _selectedPaths.isEmpty
-                ? 'Выделить всё'
-                : 'Снять выделение',
-            child: SingleClickArea(
-              onTap: () {
-                final wp = ref.read(workspacesProvider).currentPath;
-                final sep = Platform.pathSeparator;
-                ref.read(filesProvider).whenData((dbFiles) {
-                  final dbInWorkspace = wp == null || wp.isEmpty
-                      ? <AppFile>[]
-                      : dbFiles
-                            .where(
-                              (f) =>
-                                  f.path == wp || f.path.startsWith(wp + sep),
-                            )
-                            .toList();
-                  _selectAll(dbInWorkspace, _localFiles);
-                });
-              },
-              child: IconButton(
-                onPressed: () {},
-                icon: Icon(
-                  _selectedPaths.isEmpty ? Icons.select_all : Icons.deselect,
-                  size: 22,
-                  color: colorScheme.primary,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Tooltip(
-            message: 'AI Tag — генерация тегов для выбранных',
-            child: SingleClickArea(
-              onTap: _selectedPaths.isEmpty
-                  ? null
-                  : () {
-                      if (_selectedPaths.length > 1) {
-                        _generateBatchAI();
-                      } else {
-                        _generateAI();
-                      }
-                    },
-              child: IconButton(
-                onPressed: _selectedPaths.isEmpty ? null : () {},
-                icon: Icon(
-                  Icons.auto_awesome,
-                  size: 22,
-                  color: _selectedPaths.isEmpty
-                      ? colorScheme.onSurface.withValues(alpha: 0.4)
-                      : colorScheme.primary,
-                ),
-              ),
-            ),
-          ),
-
-          const SizedBox(width: 16),
-          // Сохранить все — метаданные всех рабочих областей (кроме видео)
-          Tooltip(
-            message:
-                'Сохранить метаданные в файлы (кроме видео) во всех рабочих областях',
-            child: SingleClickArea(
-              onTap: saveAllCount > 0 ? _saveAllMetadata : null,
-              child: FilledButton.icon(
-                onPressed: saveAllCount > 0 ? () {} : null,
-                icon: const Icon(Icons.save, size: 18),
-                label: Text('Сохранить все ($saveAllCount)'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: saveAllCount > 0
-                      ? colorScheme.primary
-                      : null,
-                  foregroundColor: saveAllCount > 0
-                      ? colorScheme.onPrimary
-                      : null,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          // Сохранить — только выбранный файл (disabled для видео)
-          Tooltip(
-            message: isFocusedVideo
-                ? 'Для видео файлов запись метаданных в файл недоступна'
-                : 'Сохранить метаданные выбранного файла в БД и в файл',
-            child: FilledButton.icon(
-              onPressed: saveCount > 0 ? _saveChanges : null,
-              icon: const Icon(Icons.save_outlined, size: 18),
-              label: Text('Сохранить ($saveCount)'),
-              style: FilledButton.styleFrom(
-                backgroundColor: saveCount > 0
-                    ? colorScheme.primaryContainer
-                    : null,
-                foregroundColor: saveCount > 0
-                    ? colorScheme.onPrimaryContainer
-                    : null,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFilterBar(ColorScheme colorScheme) {
-    return Container(
-      height: 44,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.3),
-          ),
-        ),
-      ),
-      child: Row(
-        children: [
-          // Search field
-          SizedBox(
-            width: 220,
-            height: 32,
-            child: TextField(
-              controller: _searchController,
-              style: const TextStyle(fontSize: 13),
-              decoration: InputDecoration(
-                hintText: 'Поиск по имени...',
-                hintStyle: TextStyle(
-                  fontSize: 13,
-                  color: colorScheme.onSurface.withValues(alpha: 0.4),
-                ),
-                prefixIcon: Icon(
-                  Icons.search,
-                  size: 18,
-                  color: colorScheme.onSurface.withValues(alpha: 0.5),
-                ),
-                suffixIcon: _searchQuery.isNotEmpty
-                    ? GestureDetector(
-                        onTap: () {
-                          _searchController.clear();
-                          setState(() => _searchQuery = '');
-                        },
-                        child: Icon(
-                          Icons.close,
-                          size: 16,
-                          color: colorScheme.onSurface.withValues(alpha: 0.5),
-                        ),
-                      )
-                    : null,
-                filled: true,
-                fillColor: colorScheme.surfaceContainerHighest.withValues(
-                  alpha: 0.5,
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  vertical: 0,
-                  horizontal: 12,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide.none,
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide.none,
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: colorScheme.primary, width: 1),
-                ),
-              ),
-              onChanged: (value) => setState(() => _searchQuery = value),
-            ),
-          ),
-          const SizedBox(width: 12),
-          // Filter chips
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _filterChip(
-                label: 'Все',
-                icon: Icons.grid_view_rounded,
-                isActive: _filterType == 'all',
-                onTap: () => setState(() => _filterType = 'all'),
-                colorScheme: colorScheme,
-              ),
-              const SizedBox(width: 6),
-              _filterChip(
-                label: 'Фото',
-                icon: Icons.image_outlined,
-                isActive: _filterType == 'images',
-                onTap: () => setState(() => _filterType = 'images'),
-                colorScheme: colorScheme,
-              ),
-              const SizedBox(width: 6),
-              _filterChip(
-                label: 'Видео',
-                icon: Icons.videocam_outlined,
-                isActive: _filterType == 'videos',
-                onTap: () => setState(() => _filterType = 'videos'),
-                colorScheme: colorScheme,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _filterChip({
-    required String label,
-    required IconData icon,
-    required bool isActive,
-    required VoidCallback onTap,
-    required ColorScheme colorScheme,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        height: 30,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(
-          color: isActive
-              ? colorScheme.primary
-              : colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(20),
-          border: isActive
-              ? null
-              : Border.all(
-                  color: colorScheme.outlineVariant.withValues(alpha: 0.4),
-                  width: 1,
-                ),
-        ),
-        alignment: Alignment.center,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 14,
-              color: isActive
-                  ? colorScheme.onPrimary
-                  : colorScheme.onSurface.withValues(alpha: 0.6),
-            ),
-            const SizedBox(width: 5),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-                color: isActive
-                    ? colorScheme.onPrimary
-                    : colorScheme.onSurface.withValues(alpha: 0.6),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   static const _months = [
@@ -1512,9 +1126,49 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
             Expanded(
               child: Column(
                 children: [
-                  _buildTopBar(colorScheme),
-                  _buildToolsBar(colorScheme),
-                  _buildFilterBar(colorScheme),
+                  GenerationTopBar(
+                    localCount: _localFiles.length,
+                    isLoading: _isLoading,
+                    batchDone: _batchDone,
+                    batchTotal: _batchTotal,
+                  ),
+                  GenerationToolsBar(
+                    selectedPaths: _selectedPaths,
+                    localFiles: _localFiles,
+                    metadataDirty: _metadataDirty,
+                    focusedPath:
+                        _selectedExistingFile?.path ??
+                        _selectedLocalInspectorFile?.path,
+                    onSelectAll: () {
+                      final wp = ref.read(workspacesProvider).currentPath;
+                      final sep = Platform.pathSeparator;
+                      ref.read(filesProvider).whenData((dbFiles) {
+                        final dbInWorkspace = wp == null || wp.isEmpty
+                            ? <AppFile>[]
+                            : dbFiles
+                                  .where(
+                                    (f) =>
+                                        f.path == wp ||
+                                        f.path.startsWith(wp + sep),
+                                  )
+                                  .toList();
+                        _selectAll(dbInWorkspace, _localFiles);
+                      });
+                    },
+                    onGenerateAI: _generateAI,
+                    onGenerateBatchAI: _generateBatchAI,
+                    onSaveAll: _saveAllMetadata,
+                    onSaveChanges: _saveChanges,
+                  ),
+                  GenerationFilterBar(
+                    searchController: _searchController,
+                    searchQuery: _searchQuery,
+                    filterType: _filterType,
+                    onSearchChanged: (value) =>
+                        setState(() => _searchQuery = value),
+                    onFilterChanged: (value) =>
+                        setState(() => _filterType = value),
+                  ),
                   // Grid Area
                   Expanded(
                     child: DropTarget(
@@ -1753,7 +1407,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                                   itemCount: allItems.length,
                                   itemBuilder: (context, index) {
                                     final item = allItems[index];
-                                    return _GridCard(
+                                    return GenerationGridCard(
                                       imagePath: item.path,
                                       filename: item.filename,
                                       isTagged: item.isTagged,
@@ -1988,14 +1642,16 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                               ),
 
                               const SizedBox(height: 16),
-                              _buildEditorialSection(
-                                context,
-                                colorScheme,
+                              GenerationEditorialSection(
                                 isMulti: false,
+                                selectedPaths: _selectedPaths,
+                                selectedExistingFile: _selectedExistingFile,
+                                selectedLocalInspectorPath:
+                                    _selectedLocalInspectorFile?.path,
                               ),
 
                               // Metadata Form
-                              const _FormLabel('TITLE'),
+                              const GenerationFormLabel('TITLE'),
                               const SizedBox(height: 6),
                               TextField(
                                 controller: _titleController,
@@ -2006,7 +1662,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                               ),
 
                               const SizedBox(height: 16),
-                              _FormLabel('KEYWORDS'),
+                              GenerationFormLabel('KEYWORDS'),
                               const SizedBox(height: 6),
                               Row(
                                 children: [
@@ -2050,17 +1706,17 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                               const Divider(),
                               const SizedBox(height: 16),
 
-                              _FormLabel('STOCK STATUS'),
+                              GenerationFormLabel('STOCK STATUS'),
                               const SizedBox(height: 12),
 
-                              _StockStatusCard(
+                              GenerationStockStatusCard(
                                 code: 'AS',
                                 label: 'Adobe Stock',
                                 color: Colors.red,
                                 isUploaded: false,
                               ),
                               const SizedBox(height: 8),
-                              _StockStatusCard(
+                              GenerationStockStatusCard(
                                 code: 'SS',
                                 label: 'Shutterstock',
                                 color: Colors.blue,
@@ -2105,569 +1761,6 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         borderSide: BorderSide(color: colorScheme.primary),
       ),
       contentPadding: const EdgeInsets.all(12),
-    );
-  }
-
-  Future<void> _batchUpdateEditorial({
-    bool? isEditorial,
-    String? city,
-    String? country,
-    DateTime? date,
-  }) async {
-    final allFiles = ref.read(filesProvider).value ?? [];
-    final selectedPaths = _selectedPaths.toList();
-
-    for (final path in selectedPaths) {
-      final existingIndex = allFiles.indexWhere((f) => f.path == path);
-      if (existingIndex != -1) {
-        final f = allFiles[existingIndex];
-        final updated = AppFile(
-          id: f.id,
-          path: f.path,
-          filename: f.filename,
-          metadataTitle: f.metadataTitle,
-          metadataDescription: f.metadataDescription,
-          metadataKeywords: f.metadataKeywords,
-          isEditorial: isEditorial ?? f.isEditorial,
-          editorialCity: city ?? f.editorialCity,
-          editorialCountry: country ?? f.editorialCountry,
-          editorialDate: date != null
-              ? date.millisecondsSinceEpoch
-              : f.editorialDate,
-          createdAt: f.createdAt,
-        );
-        await ref.read(filesProvider.notifier).updateFile(updated);
-        if (_selectedExistingFile?.id == updated.id) {
-          _selectedExistingFile = updated;
-        }
-      }
-    }
-  }
-
-  Widget _buildEditorialSection(
-    BuildContext context,
-    ColorScheme colorScheme, {
-    required bool isMulti,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // Editorial checkbox
-        Row(
-          children: [
-            SizedBox(
-              width: 24,
-              height: 24,
-              child: Checkbox(
-                value: _isEditorial,
-                onChanged: (value) async {
-                  setState(() => _isEditorial = value ?? false);
-                  await _batchUpdateEditorial(isEditorial: _isEditorial);
-                },
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              'Эдиториал',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: colorScheme.onSurface,
-              ),
-            ),
-          ],
-        ),
-
-        // Editorial fields (shown when checked)
-        if (_isEditorial) ...[
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              const _FormLabel('LOCATION'),
-              const Spacer(),
-              SizedBox(
-                height: 28,
-                child: SingleClickArea(
-                  onTap: () async {
-                    final filePath =
-                        _selectedExistingFile?.path ??
-                        _selectedLocalInspectorFile?.path;
-                    if (filePath == null) return;
-                    final exif = await MetadataService.readExifLocationAndDate(
-                      filePath,
-                    );
-                    if (exif.date != null) {
-                      setState(() => _editorialDate = exif.date);
-                    }
-                    if (exif.lat != null && exif.lon != null) {
-                      final geo = await GeocodingService.resolve(
-                        exif.lat,
-                        exif.lon,
-                      );
-                      setState(() {
-                        if (geo.city != null) {
-                          _editorialCityController.text = geo.city!;
-                        }
-                        if (geo.country != null || geo.state != null) {
-                          _editorialCountryController.text =
-                              geo.state ?? geo.country ?? '';
-                        }
-                      });
-                      await _batchUpdateEditorial(
-                        city: _editorialCityController.text,
-                        country: _editorialCountryController.text,
-                        date: _editorialDate,
-                      );
-                    }
-                  },
-                  child: FilledButton.icon(
-                    onPressed:
-                        () {}, // The actual logic is in SingleClickArea's onTap
-                    icon: const Icon(Icons.gps_fixed, size: 14),
-                    label: const Text('Авто', style: TextStyle(fontSize: 11)),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      minimumSize: Size.zero,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Consumer(
-            builder: (context, ref, child) {
-              final savedLocations =
-                  ref.watch(settingsProvider).value?.savedLocations ?? [];
-              final cities = savedLocations
-                  .map((e) => e.split('|').first)
-                  .where((e) => e.isNotEmpty)
-                  .toSet()
-                  .toList();
-              final countries = savedLocations
-                  .map((e) => e.split('|').length > 1 ? e.split('|').last : '')
-                  .where((e) => e.isNotEmpty)
-                  .toSet()
-                  .toList();
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  RawAutocomplete<String>(
-                    textEditingController: _editorialCityController,
-                    focusNode: _cityFocusNode,
-                    optionsBuilder: (textEditingValue) {
-                      if (textEditingValue.text.isEmpty) {
-                        return cities;
-                      }
-                      return cities.where(
-                        (city) => city.toLowerCase().contains(
-                          textEditingValue.text.toLowerCase(),
-                        ),
-                      );
-                    },
-                    onSelected: (String selection) {
-                      if (_editorialCountryController.text.isEmpty) {
-                        final match = savedLocations.firstWhere(
-                          (loc) => loc.startsWith('$selection|'),
-                          orElse: () => '',
-                        );
-                        if (match.isNotEmpty) {
-                          _editorialCountryController.text = match
-                              .split('|')
-                              .last;
-                        }
-                      }
-                      _batchUpdateEditorial(
-                        city: selection,
-                        country: _editorialCountryController.text,
-                      );
-                    },
-                    fieldViewBuilder:
-                        (context, controller, focusNode, onFieldSubmitted) {
-                          return TextField(
-                            controller: controller,
-                            focusNode: focusNode,
-                            onChanged: (val) =>
-                                _batchUpdateEditorial(city: val),
-                            decoration: _inputDecoration(
-                              context,
-                            ).copyWith(hintText: 'Город'),
-                            style: const TextStyle(fontSize: 13),
-                          );
-                        },
-                    optionsViewBuilder: (context, onSelected, options) {
-                      return Align(
-                        alignment: Alignment.topLeft,
-                        child: Material(
-                          elevation: 8,
-                          borderRadius: BorderRadius.circular(8),
-                          color: colorScheme.surface,
-                          clipBehavior: Clip.antiAlias,
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(
-                              maxHeight: 200,
-                              maxWidth: 296,
-                            ),
-                            child: ListView.builder(
-                              padding: EdgeInsets.zero,
-                              shrinkWrap: true,
-                              itemCount: options.length,
-                              itemBuilder: (context, index) {
-                                final option = options.elementAt(index);
-                                return ListTile(
-                                  dense: true,
-                                  title: Text(
-                                    option,
-                                    style: const TextStyle(fontSize: 13),
-                                  ),
-                                  onTap: () => onSelected(option),
-                                );
-                              },
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 6),
-                  RawAutocomplete<String>(
-                    textEditingController: _editorialCountryController,
-                    focusNode: _countryFocusNode,
-                    optionsBuilder: (textEditingValue) {
-                      if (textEditingValue.text.isEmpty) {
-                        return countries;
-                      }
-                      return countries.where(
-                        (country) => country.toLowerCase().contains(
-                          textEditingValue.text.toLowerCase(),
-                        ),
-                      );
-                    },
-                    onSelected: (selection) =>
-                        _batchUpdateEditorial(country: selection),
-                    fieldViewBuilder:
-                        (context, controller, focusNode, onFieldSubmitted) {
-                          return TextField(
-                            controller: controller,
-                            focusNode: focusNode,
-                            onChanged: (val) =>
-                                _batchUpdateEditorial(country: val),
-                            decoration: _inputDecoration(
-                              context,
-                            ).copyWith(hintText: 'Страна / Штат'),
-                            style: const TextStyle(fontSize: 13),
-                          );
-                        },
-                    optionsViewBuilder: (context, onSelected, options) {
-                      return Align(
-                        alignment: Alignment.topLeft,
-                        child: Material(
-                          elevation: 8,
-                          borderRadius: BorderRadius.circular(8),
-                          color: colorScheme.surface,
-                          clipBehavior: Clip.antiAlias,
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(
-                              maxHeight: 200,
-                              maxWidth: 296,
-                            ),
-                            child: ListView.builder(
-                              padding: EdgeInsets.zero,
-                              shrinkWrap: true,
-                              itemCount: options.length,
-                              itemBuilder: (context, index) {
-                                final option = options.elementAt(index);
-                                return ListTile(
-                                  dense: true,
-                                  title: Text(
-                                    option,
-                                    style: const TextStyle(fontSize: 13),
-                                  ),
-                                  onTap: () => onSelected(option),
-                                );
-                              },
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              );
-            },
-          ),
-          if (_editorialDate != null) ...[
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHighest.withValues(
-                  alpha: 0.5,
-                ),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.calendar_today,
-                    size: 14,
-                    color: colorScheme.onSurface.withValues(alpha: 0.6),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    _formatEditorialDate(_editorialDate!),
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: colorScheme.onSurface.withValues(alpha: 0.8),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
-
-        const SizedBox(height: 16),
-      ],
-    );
-  }
-}
-
-class _FormLabel extends StatelessWidget {
-  final String text;
-  const _FormLabel(this.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: TextStyle(
-        fontSize: 11,
-        fontWeight: FontWeight.w600,
-        letterSpacing: 0.5,
-        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
-      ),
-    );
-  }
-}
-
-class _GridCard extends StatelessWidget {
-  final String imagePath;
-  final String filename;
-  final bool isTagged;
-  final bool isSelected;
-  final VoidCallback onTap;
-
-  const _GridCard({
-    required this.imagePath,
-    required this.filename,
-    required this.isTagged,
-    required this.isSelected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return SingleClickArea(
-      onTap: onTap,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () {}, // только рипл, клик обрабатывает SingleClickArea
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: isSelected
-                  ? colorScheme.primary.withValues(alpha: 0.05)
-                  : Colors.transparent,
-              border: Border.all(
-                color: isSelected
-                    ? colorScheme.primary.withValues(alpha: 0.3)
-                    : Colors.transparent,
-                width: 1,
-              ),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Builder(
-                    builder: (context) {
-                      final isVideo = AppConstants.isVideo(imagePath);
-
-                      return Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(8),
-                          border: isSelected
-                              ? Border.all(color: colorScheme.primary, width: 2)
-                              : Border.all(color: colorScheme.outline),
-                          color: isVideo
-                              ? colorScheme.surfaceContainerHighest
-                              : null,
-                          image: isVideo
-                              ? null
-                              : DecorationImage(
-                                  image: FileImage(File(imagePath)),
-                                  fit: BoxFit.cover,
-                                ),
-                        ),
-                        child: Stack(
-                          children: [
-                            if (isVideo)
-                              Center(
-                                child: Icon(
-                                  Icons.videocam,
-                                  size: 48,
-                                  color: colorScheme.primary.withValues(
-                                    alpha: 0.5,
-                                  ),
-                                ),
-                              ),
-                            if (isSelected)
-                              Align(
-                                alignment: Alignment.topRight,
-                                child: Padding(
-                                  padding: const EdgeInsets.all(8.0),
-                                  child: Icon(
-                                    Icons.check_circle,
-                                    color: colorScheme.primary,
-                                    size: 20,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  filename,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Builder(
-                      builder: (context) {
-                        final isDark =
-                            Theme.of(context).brightness == Brightness.dark;
-                        final dotColor = isTagged
-                            ? (isDark
-                                  ? AppTheme.successColorDark
-                                  : AppTheme.successColor)
-                            : (isDark
-                                  ? AppTheme.warningColorDark
-                                  : AppTheme.warningColor);
-                        return Container(
-                          width: 6,
-                          height: 6,
-                          decoration: BoxDecoration(
-                            color: dotColor,
-                            shape: BoxShape.circle,
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      isTagged ? 'Tagged' : 'Untagged',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: colorScheme.onSurface.withValues(alpha: 0.6),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _StockStatusCard extends StatelessWidget {
-  final String code;
-  final String label;
-  final Color color;
-  final bool isUploaded;
-
-  const _StockStatusCard({
-    required this.code,
-    required this.label,
-    required this.color,
-    required this.isUploaded,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: isDark
-            ? colorScheme.outlineVariant.withValues(alpha: 0.1)
-            : Colors.grey.shade50,
-        border: Border.all(color: colorScheme.outline),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 24,
-                height: 24,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  code,
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: color,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-          Icon(
-            isUploaded ? Icons.check_circle : Icons.check_circle_outline,
-            color: isUploaded
-                ? (isDark ? AppTheme.successColorDark : AppTheme.successColor)
-                : colorScheme.onSurface.withValues(alpha: 0.3),
-            size: 18,
-          ),
-        ],
-      ),
     );
   }
 }
