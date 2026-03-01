@@ -10,6 +10,7 @@ import 'core/state/workspaces_provider.dart';
 import 'features/generation/presentation/generation_screen.dart';
 import 'features/history/presentation/history_screen.dart';
 import 'features/settings/settings_screen.dart';
+import 'core/widgets/single_click_area.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -131,7 +132,10 @@ class _MainShellState extends ConsumerState<MainShell> {
 
                 // Разделы и настройки — компактная горизонтальная панель внизу
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     border: Border(top: BorderSide(color: colorScheme.outline)),
                   ),
@@ -205,7 +209,10 @@ class _MainShellState extends ConsumerState<MainShell> {
   }
 
   Widget _buildWorkspacesBlock(
-      BuildContext context, ColorScheme colorScheme, WidgetRef ref) {
+    BuildContext context,
+    ColorScheme colorScheme,
+    WidgetRef ref,
+  ) {
     final workspaces = ref.watch(workspacesProvider);
     final paths = workspaces.paths;
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -262,68 +269,82 @@ class _MainShellState extends ConsumerState<MainShell> {
                         padding: const EdgeInsets.only(bottom: 4),
                         child: Material(
                           color: Colors.transparent,
-                          child: InkWell(
+                          child: SingleClickArea(
                             onTap: () {
-                              ref.read(workspacesProvider.notifier).setCurrent(idx);
+                              ref
+                                  .read(workspacesProvider.notifier)
+                                  .setCurrent(idx);
                               ref.read(navigationProvider.notifier).setIndex(0);
                             },
-                            borderRadius: BorderRadius.circular(8),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 8),
-                              decoration: BoxDecoration(
-                                color: isSelected
-                                    ? colorScheme.primary.withValues(alpha: 0.15)
-                                    : Colors.transparent,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.folder_outlined,
-                                    size: 18,
-                                    color: isSelected
-                                        ? colorScheme.primary
-                                        : colorScheme.onSurface
-                                            .withValues(alpha: 0.6),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Tooltip(
-                                      message: path,
-                                      child: Text(
-                                        name,
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: isSelected
-                                              ? FontWeight.w600
-                                              : FontWeight.normal,
-                                          color: isSelected
-                                              ? colorScheme.primary
-                                              : colorScheme.onSurface,
+                            child: InkWell(
+                              onTap: () {}, // Handled by SingleClickArea
+                              borderRadius: BorderRadius.circular(8),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? colorScheme.primary.withValues(
+                                          alpha: 0.15,
+                                        )
+                                      : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.folder_outlined,
+                                      size: 18,
+                                      color: isSelected
+                                          ? colorScheme.primary
+                                          : colorScheme.onSurface.withValues(
+                                              alpha: 0.6,
+                                            ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Tooltip(
+                                        message: path,
+                                        child: Text(
+                                          name,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: isSelected
+                                                ? FontWeight.w600
+                                                : FontWeight.normal,
+                                            color: isSelected
+                                                ? colorScheme.primary
+                                                : colorScheme.onSurface,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
                                         ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
-                                  ),
-                                  IconButton(
-                                    icon: Icon(
-                                      Icons.close,
-                                      size: 16,
-                                      color: colorScheme.onSurface.withValues(alpha: 0.5),
+                                    IconButton(
+                                      icon: Icon(
+                                        Icons.close,
+                                        size: 16,
+                                        color: colorScheme.onSurface.withValues(
+                                          alpha: 0.5,
+                                        ),
+                                      ),
+                                      onPressed: () {
+                                        ref
+                                            .read(workspacesProvider.notifier)
+                                            .removeWorkspace(idx);
+                                      },
+                                      tooltip: 'Удалить из рабочих областей',
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(
+                                        minWidth: 28,
+                                        minHeight: 28,
+                                      ),
                                     ),
-                                    onPressed: () {
-                                      ref.read(workspacesProvider.notifier).removeWorkspace(idx);
-                                    },
-                                    tooltip: 'Удалить из рабочих областей',
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints(
-                                      minWidth: 28,
-                                      minHeight: 28,
-                                    ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
                           ),
@@ -339,7 +360,9 @@ class _MainShellState extends ConsumerState<MainShell> {
               onPressed: () async {
                 final path = await getDirectoryPath();
                 if (path != null && path.isNotEmpty) {
-                  await ref.read(workspacesProvider.notifier).addWorkspace(path);
+                  await ref
+                      .read(workspacesProvider.notifier)
+                      .addWorkspace(path);
                   if (context.mounted) {
                     ref.read(navigationProvider.notifier).setIndex(0);
                   }
@@ -374,7 +397,6 @@ class _MainShellState extends ConsumerState<MainShell> {
       ),
     );
   }
-
 }
 
 class _SidebarIconItem extends StatelessWidget {
@@ -401,21 +423,26 @@ class _SidebarIconItem extends StatelessWidget {
     final iconSize = compact ? 20.0 : 24.0;
     return Tooltip(
       message: tooltip,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(compact ? 6 : 8),
-          child: Container(
-            padding: EdgeInsets.all(padding),
-            decoration: BoxDecoration(
-              color: isSelected ? selectedBg : Colors.transparent,
-              borderRadius: BorderRadius.circular(compact ? 6 : 8),
-            ),
-            child: Icon(
-              icon,
-              size: iconSize,
-              color: isSelected ? primary : colorScheme.onSurface.withValues(alpha: 0.7),
+      child: SingleClickArea(
+        onTap: onTap,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () {}, // Handled by SingleClickArea
+            borderRadius: BorderRadius.circular(compact ? 6 : 8),
+            child: Container(
+              padding: EdgeInsets.all(padding),
+              decoration: BoxDecoration(
+                color: isSelected ? selectedBg : Colors.transparent,
+                borderRadius: BorderRadius.circular(compact ? 6 : 8),
+              ),
+              child: Icon(
+                icon,
+                size: iconSize,
+                color: isSelected
+                    ? primary
+                    : colorScheme.onSurface.withValues(alpha: 0.7),
+              ),
             ),
           ),
         ),
@@ -453,36 +480,39 @@ class _SidebarItem extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
-          hoverColor: isSelected ? selectedBg : unselectedHover,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: isSelected ? selectedBg : Colors.transparent,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  icon,
-                  size: 20,
-                  color: isSelected ? selectedText : unselectedText,
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontWeight: isSelected
-                        ? FontWeight.w500
-                        : FontWeight.normal,
+      child: SingleClickArea(
+        onTap: onTap,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () {}, // Handled by SingleClickArea
+            borderRadius: BorderRadius.circular(8),
+            hoverColor: isSelected ? selectedBg : unselectedHover,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: isSelected ? selectedBg : Colors.transparent,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    icon,
+                    size: 20,
                     color: isSelected ? selectedText : unselectedText,
                   ),
-                ),
-              ],
+                  const SizedBox(width: 12),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontWeight: isSelected
+                          ? FontWeight.w500
+                          : FontWeight.normal,
+                      color: isSelected ? selectedText : unselectedText,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

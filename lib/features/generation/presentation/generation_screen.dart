@@ -15,9 +15,9 @@ import '../../../core/services/metadata_service.dart';
 import '../../../core/services/geocoding_service.dart';
 import '../../../core/state/files_provider.dart';
 import '../../../core/state/settings_provider.dart';
+import '../../../core/widgets/single_click_area.dart';
 import 'video_player_widget.dart';
 import '../../../core/state/workspaces_provider.dart';
-import '../../../core/widgets/single_click_area.dart';
 import '../../../models/app_file.dart';
 import '../../../models/generation_options.dart';
 
@@ -1169,8 +1169,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
             message: _selectedPaths.isEmpty
                 ? 'Выделить всё'
                 : 'Снять выделение',
-            child: IconButton(
-              onPressed: () {
+            child: SingleClickArea(
+              onTap: () {
                 final wp = ref.read(workspacesProvider).currentPath;
                 final sep = Platform.pathSeparator;
                 ref.read(filesProvider).whenData((dbFiles) {
@@ -1185,18 +1185,21 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                   _selectAll(dbInWorkspace, _localFiles);
                 });
               },
-              icon: Icon(
-                _selectedPaths.isEmpty ? Icons.select_all : Icons.deselect,
-                size: 22,
-                color: colorScheme.primary,
+              child: IconButton(
+                onPressed: () {},
+                icon: Icon(
+                  _selectedPaths.isEmpty ? Icons.select_all : Icons.deselect,
+                  size: 22,
+                  color: colorScheme.primary,
+                ),
               ),
             ),
           ),
           const SizedBox(width: 8),
           Tooltip(
             message: 'AI Tag — генерация тегов для выбранных',
-            child: IconButton(
-              onPressed: _selectedPaths.isEmpty
+            child: SingleClickArea(
+              onTap: _selectedPaths.isEmpty
                   ? null
                   : () {
                       if (_selectedPaths.length > 1) {
@@ -1205,12 +1208,15 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                         _generateAI();
                       }
                     },
-              icon: Icon(
-                Icons.auto_awesome,
-                size: 22,
-                color: _selectedPaths.isEmpty
-                    ? colorScheme.onSurface.withValues(alpha: 0.4)
-                    : colorScheme.primary,
+              child: IconButton(
+                onPressed: _selectedPaths.isEmpty ? null : () {},
+                icon: Icon(
+                  Icons.auto_awesome,
+                  size: 22,
+                  color: _selectedPaths.isEmpty
+                      ? colorScheme.onSurface.withValues(alpha: 0.4)
+                      : colorScheme.primary,
+                ),
               ),
             ),
           ),
@@ -1220,15 +1226,20 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
           Tooltip(
             message:
                 'Сохранить метаданные в файлы (кроме видео) во всех рабочих областях',
-            child: FilledButton.icon(
-              onPressed: saveAllCount > 0 ? _saveAllMetadata : null,
-              icon: const Icon(Icons.save, size: 18),
-              label: Text('Сохранить все ($saveAllCount)'),
-              style: FilledButton.styleFrom(
-                backgroundColor: saveAllCount > 0 ? colorScheme.primary : null,
-                foregroundColor: saveAllCount > 0
-                    ? colorScheme.onPrimary
-                    : null,
+            child: SingleClickArea(
+              onTap: saveAllCount > 0 ? _saveAllMetadata : null,
+              child: FilledButton.icon(
+                onPressed: saveAllCount > 0 ? () {} : null,
+                icon: const Icon(Icons.save, size: 18),
+                label: Text('Сохранить все ($saveAllCount)'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: saveAllCount > 0
+                      ? colorScheme.primary
+                      : null,
+                  foregroundColor: saveAllCount > 0
+                      ? colorScheme.onPrimary
+                      : null,
+                ),
               ),
             ),
           ),
@@ -2217,8 +2228,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
               const Spacer(),
               SizedBox(
                 height: 28,
-                child: TextButton.icon(
-                  onPressed: () async {
+                child: SingleClickArea(
+                  onTap: () async {
                     final filePath =
                         _selectedExistingFile?.path ??
                         _selectedLocalInspectorFile?.path;
@@ -2249,18 +2260,15 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                       );
                     }
                   },
-                  icon: Icon(
-                    Icons.gps_fixed,
-                    size: 14,
-                    color: colorScheme.primary,
-                  ),
-                  label: Text(
-                    'Авто',
-                    style: TextStyle(fontSize: 11, color: colorScheme.primary),
-                  ),
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    minimumSize: Size.zero,
+                  child: FilledButton.icon(
+                    onPressed:
+                        () {}, // The actual logic is in SingleClickArea's onTap
+                    icon: const Icon(Icons.gps_fixed, size: 14),
+                    label: const Text('Авто', style: TextStyle(fontSize: 11)),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: Size.zero,
+                    ),
                   ),
                 ),
               ),
