@@ -45,55 +45,43 @@ class GenerationGridCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final isVideo = AppConstants.isVideo(imagePath);
 
-    return SingleClickArea(
-      onTap: onTap,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: isSelected
-                  ? colorScheme.primary.withValues(alpha: 0.05)
-                  : Colors.transparent,
-              border: Border.all(
+    return RepaintBoundary(
+      child: SingleClickArea(
+        onTap: onTap,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
                 color: isSelected
-                    ? colorScheme.primary.withValues(alpha: 0.3)
+                    ? colorScheme.primary.withValues(alpha: 0.05)
                     : Colors.transparent,
-                width: 1,
+                border: Border.all(
+                  color: isSelected
+                      ? colorScheme.primary.withValues(alpha: 0.3)
+                      : Colors.transparent,
+                  width: 1,
+                ),
+                borderRadius: BorderRadius.circular(12),
               ),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Builder(
-                    builder: (context) {
-                      final isVideo = AppConstants.isVideo(imagePath);
-
-                      return Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(8),
-                          border: isSelected
-                              ? Border.all(color: colorScheme.primary, width: 2)
-                              : Border.all(color: colorScheme.outline),
-                          color: isVideo
-                              ? colorScheme.surfaceContainerHighest
-                              : null,
-                          image: isVideo
-                              ? null
-                              : DecorationImage(
-                                  image: FileImage(File(imagePath)),
-                                  fit: BoxFit.cover,
-                                ),
-                        ),
-                        child: Stack(
-                          children: [
-                            if (isVideo)
-                              Center(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          // Image layer — stable, not rebuilt on selection change
+                          if (isVideo)
+                            Container(
+                              color: colorScheme.surfaceContainerHighest,
+                              child: Center(
                                 child: Icon(
                                   Icons.videocam,
                                   size: 48,
@@ -102,71 +90,99 @@ class GenerationGridCard extends StatelessWidget {
                                   ),
                                 ),
                               ),
-                            if (isSelected)
-                              Align(
-                                alignment: Alignment.topRight,
-                                child: Padding(
-                                  padding: const EdgeInsets.all(8.0),
-                                  child: Icon(
-                                    Icons.check_circle,
-                                    color: colorScheme.primary,
-                                    size: 20,
+                            )
+                          else
+                            Image.file(
+                              File(imagePath),
+                              fit: BoxFit.cover,
+                              // gaplessPlayback prevents flicker on rebuild
+                              gaplessPlayback: true,
+                              errorBuilder: (_, __, ___) => Container(
+                                color: colorScheme.surfaceContainerHighest,
+                                child: Icon(
+                                  Icons.broken_image_outlined,
+                                  color: colorScheme.onSurface.withValues(
+                                    alpha: 0.3,
                                   ),
                                 ),
                               ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  filename,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Builder(
-                      builder: (context) {
-                        final isDark =
-                            Theme.of(context).brightness == Brightness.dark;
-                        final dotColor = isTagged
-                            ? (isDark
-                                  ? AppTheme.successColorDark
-                                  : AppTheme.successColor)
-                            : (isDark
-                                  ? AppTheme.warningColorDark
-                                  : AppTheme.warningColor);
-                        return Container(
-                          width: 6,
-                          height: 6,
-                          decoration: BoxDecoration(
-                            color: dotColor,
-                            shape: BoxShape.circle,
+                            ),
+                          // Selection overlay — only this layer rebuilds
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                color: isSelected
+                                    ? colorScheme.primary
+                                    : Colors.transparent,
+                                width: 2,
+                              ),
+                            ),
                           ),
-                        );
-                      },
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        isTagged ? 'Tagged' : 'Untagged',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: colorScheme.onSurface.withValues(alpha: 0.6),
-                        ),
+                          if (isSelected)
+                            Align(
+                              alignment: Alignment.topRight,
+                              child: Padding(
+                                padding: const EdgeInsets.all(8.0),
+                                child: Icon(
+                                  Icons.check_circle,
+                                  color: colorScheme.primary,
+                                  size: 20,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
-              ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    filename,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Builder(
+                        builder: (context) {
+                          final isDark =
+                              Theme.of(context).brightness == Brightness.dark;
+                          final dotColor = isTagged
+                              ? (isDark
+                                    ? AppTheme.successColorDark
+                                    : AppTheme.successColor)
+                              : (isDark
+                                    ? AppTheme.warningColorDark
+                                    : AppTheme.warningColor);
+                          return Container(
+                            width: 6,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              color: dotColor,
+                              shape: BoxShape.circle,
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          isTagged ? 'Tagged' : 'Untagged',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: colorScheme.onSurface.withValues(alpha: 0.6),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
