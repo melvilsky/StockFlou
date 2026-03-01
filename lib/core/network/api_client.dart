@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import 'package:fc_native_video_thumbnail/fc_native_video_thumbnail.dart';
 
 import '../../models/generation_options.dart';
 
@@ -23,8 +24,14 @@ class ApiClient {
   static const String _baseUrl =
       'https://www.aistockkeywords.com/api/public/v1';
   final Dio _dio;
+  final FcNativeVideoThumbnail _videoThumbnail = FcNativeVideoThumbnail();
 
   ApiClient() : _dio = Dio(BaseOptions(baseUrl: _baseUrl));
+
+  bool _isVideo(String path) {
+    final ext = p.extension(path).toLowerCase();
+    return ['.mp4', '.mov', '.avi', '.mkv', '.m4v'].contains(ext);
+  }
 
   Future<Map<String, dynamic>> generateMetadata({
     required String apiKey,
@@ -34,27 +41,52 @@ class ApiClient {
     File file = File(filePath);
     String uploadPath = filePath;
 
-    // Ресайз в отдельном isolate, чтобы не подвисал UI
-    if (file.lengthSync() > 4 * 1024 * 1024) {
-      final bytes = await file.readAsBytes();
-      final resizedBytes = await compute(
-        _resizeImageInIsolate,
-        bytes,
-        debugLabel: 'resizeImage',
+    final tempDir = await getTemporaryDirectory();
+    final stockFlouTemp = Directory(p.join(tempDir.path, 'stockflou_temp'));
+    if (!await stockFlouTemp.exists()) {
+      await stockFlouTemp.create(recursive: true);
+    }
+
+    if (_isVideo(filePath)) {
+      // Это видео: извлекаем кадр из середины
+      final tempThumbPath = p.join(
+        stockFlouTemp.path,
+        'vid_thumb_${DateTime.now().millisecondsSinceEpoch}.jpg',
       );
-      if (resizedBytes != null && resizedBytes.isNotEmpty) {
-        final tempDir = await getTemporaryDirectory();
-        final stockFlouTemp =
-            Directory(p.join(tempDir.path, 'stockflou_temp'));
-        if (!await stockFlouTemp.exists()) {
-          await stockFlouTemp.create(recursive: true);
-        }
-        final tempPath = p.join(
-          stockFlouTemp.path,
-          'resized_${DateTime.now().millisecondsSinceEpoch}.jpg',
+
+      final success = await _videoThumbnail.getVideoThumbnail(
+        srcFile: filePath,
+        destFile: tempThumbPath,
+        width: 1600,
+        height: 1600,
+        format: 'jpeg',
+        quality: 85,
+        // Извлечь из середины не всегда возможно напрямую параметром позиции,
+        // но плагин по умолчанию берет кадр, который может служить превью (например, из метаданных видео или первого кадра).
+      );
+
+      if (success == true && await File(tempThumbPath).exists()) {
+        uploadPath = tempThumbPath;
+      } else {
+        throw Exception('Failed to generate thumbnail for video: $filePath');
+      }
+    } else {
+      // Это картинка: Ресайз в отдельном isolate, чтобы не подвисал UI
+      if (file.lengthSync() > 4 * 1024 * 1024) {
+        final bytes = await file.readAsBytes();
+        final resizedBytes = await compute(
+          _resizeImageInIsolate,
+          bytes,
+          debugLabel: 'resizeImage',
         );
-        await File(tempPath).writeAsBytes(resizedBytes);
-        uploadPath = tempPath;
+        if (resizedBytes != null && resizedBytes.isNotEmpty) {
+          final tempPath = p.join(
+            stockFlouTemp.path,
+            'resized_${DateTime.now().millisecondsSinceEpoch}.jpg',
+          );
+          await File(tempPath).writeAsBytes(resizedBytes);
+          uploadPath = tempPath;
+        }
       }
     }
 

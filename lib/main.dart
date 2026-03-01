@@ -56,10 +56,20 @@ class MainShell extends ConsumerStatefulWidget {
 }
 
 class _MainShellState extends ConsumerState<MainShell> {
+  bool _navigationRestored = false;
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final currentIndex = ref.watch(navigationProvider);
+    ref.listen(initialNavigationIndexProvider, (prev, next) {
+      next.whenData((idx) {
+        if (!_navigationRestored) {
+          _navigationRestored = true;
+          ref.read(navigationProvider.notifier).setIndex(idx);
+        }
+      });
+    });
 
     return Scaffold(
       body: Row(

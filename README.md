@@ -2,6 +2,10 @@
 
 A new Flutter project.
 
+## Документация и конвенции
+
+- **[docs/UI_CONVENTIONS.md](docs/UI_CONVENTIONS.md)** — клики на desktop (одиночный клик через `SingleClickArea`), где применять и как не ломать.
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.

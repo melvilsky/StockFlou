@@ -3,6 +3,7 @@ import 'package:collection/collection.dart';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_secure_bookmarks/macos_secure_bookmarks.dart';
 import 'package:pool/pool.dart';
@@ -11,10 +12,12 @@ import 'package:uuid/uuid.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/services/metadata_service.dart';
+import '../../../core/services/geocoding_service.dart';
 import '../../../core/state/files_provider.dart';
-import '../../../core/state/navigation_provider.dart';
 import '../../../core/state/settings_provider.dart';
+import 'video_player_widget.dart';
 import '../../../core/state/workspaces_provider.dart';
+import '../../../core/widgets/single_click_area.dart';
 import '../../../models/app_file.dart';
 import '../../../models/generation_options.dart';
 
@@ -47,8 +50,69 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
   double _numKeywords = 15;
   final _titleController = TextEditingController();
   final _keywordsController = TextEditingController();
+
   /// Есть несохранённые изменения метаданных у выбранного файла.
   bool _metadataDirty = false;
+
+  // Editorial
+  bool _isEditorial = false;
+  final _editorialCityController = TextEditingController();
+  final _editorialCountryController = TextEditingController();
+  final _cityFocusNode = FocusNode();
+  final _countryFocusNode = FocusNode();
+  DateTime? _editorialDate;
+
+  /// Последний индекс для shift-click выделения
+  int? _lastSelectedIndex;
+
+  // Filters
+  final _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  /// 'all' | 'images' | 'videos'
+  String _filterType = 'all';
+
+  static const _videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.m4v'];
+  bool _isVideoPath(String path) {
+    final ext = path.split('.').last.toLowerCase();
+    return _videoExtensions.contains('.$ext');
+  }
+
+  /// Применяет текущие фильтры к спискам файлов и возвращает отфильтрованные списки.
+  ({List<File> locals, List<AppFile> db}) _applyFilters(
+    List<File> locals,
+    List<AppFile> db,
+  ) {
+    List<File> filteredLocals = locals;
+    List<AppFile> filteredDb = db;
+
+    // Type filter
+    if (_filterType == 'images') {
+      filteredLocals = filteredLocals
+          .where((f) => !_isVideoPath(f.path))
+          .toList();
+      filteredDb = filteredDb.where((f) => !_isVideoPath(f.path)).toList();
+    } else if (_filterType == 'videos') {
+      filteredLocals = filteredLocals
+          .where((f) => _isVideoPath(f.path))
+          .toList();
+      filteredDb = filteredDb.where((f) => _isVideoPath(f.path)).toList();
+    }
+
+    // Text search filter
+    if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      filteredLocals = filteredLocals.where((f) {
+        final name = f.path.split(Platform.pathSeparator).last.toLowerCase();
+        return name.contains(q);
+      }).toList();
+      filteredDb = filteredDb.where((f) {
+        return f.filename.toLowerCase().contains(q);
+      }).toList();
+    }
+
+    return (locals: filteredLocals, db: filteredDb);
+  }
 
   /// На macOS: открытый security-scoped ресурс текущей рабочей области (держим доступ, чтобы миниатюры и чтение файлов работали).
   FileSystemEntity? _currentScopedResource;
@@ -58,18 +122,30 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
     _releaseSecurityScopedResource();
     _titleController.dispose();
     _keywordsController.dispose();
+    _searchController.dispose();
+    _editorialCityController.dispose();
+    _editorialCountryController.dispose();
+    _cityFocusNode.dispose();
+    _countryFocusNode.dispose();
     super.dispose();
   }
 
   Future<void> _releaseSecurityScopedResource() async {
     if (_currentScopedResource == null) return;
     try {
-      await _secureBookmarks.stopAccessingSecurityScopedResource(_currentScopedResource!);
+      await _secureBookmarks.stopAccessingSecurityScopedResource(
+        _currentScopedResource!,
+      );
     } catch (_) {}
     _currentScopedResource = null;
   }
 
   static final _secureBookmarks = SecureBookmarks();
+
+  bool _isVideo(String path) {
+    final ext = path.split('.').last.toLowerCase();
+    return ['.mp4', '.mov', '.avi', '.mkv', '.m4v'].contains('.$ext');
+  }
 
   /// Загружает файлы текущей рабочей области из папки (без блокировки UI).
   /// На macOS при наличии security-scoped bookmark держит доступ открытым до смены папки/dispose,
@@ -92,7 +168,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
           isDirectory: true,
         );
         dir = entity as Directory;
-        scopeStarted = await _secureBookmarks.startAccessingSecurityScopedResource(entity);
+        scopeStarted = await _secureBookmarks
+            .startAccessingSecurityScopedResource(entity);
         if (!scopeStarted || !await dir.exists()) {
           if (mounted) {
             setState(() => _localFiles.clear());
@@ -102,33 +179,33 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         }
         _currentScopedResource = dir;
       } else {
+        // Без bookmark: используем путь напрямую (сработает при Full Disk Access)
         dir = Directory(currentPath);
-        if (!await dir.exists()) {
-          if (mounted) {
-            setState(() => _localFiles.clear());
-            _showError('Папка не найдена: $currentPath');
-          }
-          return;
-        }
       }
       final imageExtensions = ['.jpg', '.jpeg', '.png'];
       final videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.m4v'];
       final allExtensions = [...imageExtensions, ...videoExtensions];
       final dbFiles = ref.read(filesProvider).value ?? [];
       final sep = Platform.pathSeparator;
-      final prefix = currentPath.endsWith(sep) ? currentPath : currentPath + sep;
-      final dbPathsInWorkspace =
-          dbFiles.where((f) => f.path == currentPath || f.path.startsWith(prefix)).map((f) => f.path).toSet();
+      final prefix = currentPath.endsWith(sep)
+          ? currentPath
+          : currentPath + sep;
+      final dbPathsInWorkspace = dbFiles
+          .where((f) => f.path == currentPath || f.path.startsWith(prefix))
+          .map((f) => f.path)
+          .toSet();
 
-      final List<FileSystemEntity> entities =
-          await dir.list(recursive: false).toList();
+      final List<FileSystemEntity> entities = await dir
+          .list(recursive: false)
+          .toList();
       if (!mounted) return;
       final newLocal = <File>[];
       for (var entity in entities) {
         if (entity is File) {
           final path = entity.path;
           final ext = path.split('.').last.toLowerCase();
-          if (allExtensions.contains('.$ext') && !dbPathsInWorkspace.contains(path)) {
+          if (allExtensions.contains('.$ext') &&
+              !dbPathsInWorkspace.contains(path)) {
             newLocal.add(entity);
           }
         }
@@ -158,12 +235,9 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
   Future<void> _openFullDiskAccessSettings() async {
     if (!Platform.isMacOS) return;
     try {
-      await Process.run(
-        'open',
-        [
-          'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles',
-        ],
-      );
+      await Process.run('open', [
+        'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles',
+      ]);
     } catch (_) {}
   }
 
@@ -184,18 +258,12 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                 Text(
                   'Чтобы приложение могло видеть файлы в выбранной папке, '
                   'нужно включить доступ в настройках macOS.',
-                  style: TextStyle(
-                    color: colorScheme.onSurface,
-                    height: 1.4,
-                  ),
+                  style: TextStyle(color: colorScheme.onSurface, height: 1.4),
                 ),
                 const SizedBox(height: 16),
                 const Text(
                   'Инструкция:',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                  ),
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -219,9 +287,13 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                         final exe = Platform.resolvedExecutable;
                         final parts = exe.split(Platform.pathSeparator);
                         // .../stock_flou.app/Contents/MacOS/stock_flou -> show .../stock_flou.app
-                        final appIdx = parts.indexWhere((e) => e.endsWith('.app'));
+                        final appIdx = parts.indexWhere(
+                          (e) => e.endsWith('.app'),
+                        );
                         if (appIdx >= 0) {
-                          appPath = parts.sublist(0, appIdx + 1).join(Platform.pathSeparator);
+                          appPath = parts
+                              .sublist(0, appIdx + 1)
+                              .join(Platform.pathSeparator);
                         } else {
                           appPath = exe;
                         }
@@ -235,7 +307,9 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
-                              color: colorScheme.onSurface.withValues(alpha: 0.8),
+                              color: colorScheme.onSurface.withValues(
+                                alpha: 0.8,
+                              ),
                             ),
                           ),
                           const SizedBox(height: 4),
@@ -244,7 +318,9 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                             style: TextStyle(
                               fontSize: 11,
                               fontFamily: 'monospace',
-                              color: colorScheme.onSurface.withValues(alpha: 0.7),
+                              color: colorScheme.onSurface.withValues(
+                                alpha: 0.7,
+                              ),
                             ),
                           ),
                         ],
@@ -312,8 +388,9 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
 
     try {
       // Асинхронное чтение директории, чтобы не блокировать UI
-      final List<FileSystemEntity> entities =
-          await dir.list(recursive: false).toList();
+      final List<FileSystemEntity> entities = await dir
+          .list(recursive: false)
+          .toList();
 
       if (!mounted) return;
       setState(() {
@@ -345,30 +422,89 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
     }
   }
 
-  void _toggleSelection(String path, {AppFile? existing, File? local}) {
+  void _handleSelectAll() {
+    final workspacePath = ref.read(workspacesProvider).currentPath;
+    if (workspacePath == null || workspacePath.isEmpty) return;
+
+    final dbFiles = ref.read(filesProvider).value ?? [];
+    final sep = Platform.pathSeparator;
+    final dbFilesInWorkspace = dbFiles.where((f) {
+      final p = f.path;
+      return p == workspacePath || p.startsWith(workspacePath + sep);
+    }).toList();
+
+    final currentLocalFiles = _localFiles
+        .where((lf) => !dbFilesInWorkspace.any((df) => df.path == lf.path))
+        .toList();
+
+    // Применяем фильтры — выделяем только видимые элементы
+    final filtered = _applyFilters(currentLocalFiles, dbFilesInWorkspace);
+    _selectAll(filtered.db, filtered.locals);
+  }
+
+  void _toggleSelection(
+    int index,
+    String path,
+    List<String> allPaths, {
+    AppFile? existing,
+    File? local,
+  }) {
+    final isShiftPressed =
+        HardwareKeyboard.instance.logicalKeysPressed.contains(
+          LogicalKeyboardKey.shiftLeft,
+        ) ||
+        HardwareKeyboard.instance.logicalKeysPressed.contains(
+          LogicalKeyboardKey.shiftRight,
+        );
+
     setState(() {
-      if (_selectedPaths.contains(path)) {
-        _selectedPaths.remove(path);
-        if (_selectedExistingFile?.path == path ||
-            _selectedLocalInspectorFile?.path == path) {
-          _selectedExistingFile = null;
-          _selectedLocalInspectorFile = null;
-          _clearResults();
+      if (isShiftPressed &&
+          _lastSelectedIndex != null &&
+          _lastSelectedIndex != index) {
+        // Shift+Click: добавить диапазон к текущему выделению
+        final start = index < _lastSelectedIndex! ? index : _lastSelectedIndex!;
+        final end = index > _lastSelectedIndex! ? index : _lastSelectedIndex!;
+
+        for (int i = start; i <= end; i++) {
+          final p = allPaths[i];
+          if (!_selectedPaths.contains(p)) {
+            _selectedPaths.add(p);
+          }
         }
       } else {
+        // Обычный клик: сбросить всё, выделить только этот элемент (фокус)
+        _selectedPaths.clear();
         _selectedPaths.add(path);
-        if (existing != null) {
-          _selectedExistingFile = existing;
-          _selectedLocalInspectorFile = null;
-          _titleController.text = existing.metadataTitle ?? '';
-          _keywordsController.text = existing.metadataKeywords ?? '';
-          _metadataDirty = false;
-        } else if (local != null) {
-          _selectedLocalInspectorFile = local;
-          _selectedExistingFile = null;
-          _clearResults();
-        }
       }
+
+      // Всегда устанавливаем кликнутый элемент как активный для инспектора
+      if (existing != null) {
+        _selectedExistingFile = existing;
+        _selectedLocalInspectorFile = null;
+        _titleController.text = existing.metadataTitle ?? '';
+        _keywordsController.text = existing.metadataKeywords ?? '';
+        _isEditorial = existing.isEditorial;
+        _metadataDirty = false;
+      } else if (local != null) {
+        _selectedLocalInspectorFile = local;
+        _selectedExistingFile = null;
+        _isEditorial = false;
+        _clearResults();
+      }
+      // Загружаем editorial поля
+      if (existing != null) {
+        _editorialCityController.text = existing.editorialCity ?? '';
+        _editorialCountryController.text = existing.editorialCountry ?? '';
+        _editorialDate = existing.editorialDate != null
+            ? DateTime.fromMillisecondsSinceEpoch(existing.editorialDate!)
+            : null;
+      } else {
+        _editorialCityController.clear();
+        _editorialCountryController.clear();
+        _editorialDate = null;
+      }
+
+      _lastSelectedIndex = index;
     });
   }
 
@@ -429,8 +565,37 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       final List<dynamic> fetchedKeywords = metadata['keywords'] ?? [];
       final keywordsString = fetchedKeywords.join(', ');
 
+      // Если editorial — формируем prefix из EXIF и geocoding
+      String finalTitle = fetchedTitle;
+      if (_isEditorial) {
+        // Загружаем EXIF если ещё не загружены
+        if (_editorialDate == null ||
+            (_editorialCityController.text.isEmpty &&
+                _editorialCountryController.text.isEmpty)) {
+          final exif = await MetadataService.readExifLocationAndDate(
+            fileToProcess.path,
+          );
+          if (exif.date != null && _editorialDate == null) {
+            _editorialDate = exif.date;
+          }
+          if (exif.lat != null &&
+              exif.lon != null &&
+              _editorialCityController.text.isEmpty) {
+            final geo = await GeocodingService.resolve(exif.lat, exif.lon);
+            if (geo.city != null) _editorialCityController.text = geo.city!;
+            if (geo.country != null || geo.state != null) {
+              _editorialCountryController.text = geo.state ?? geo.country ?? '';
+            }
+          }
+        }
+        final prefix = _formatEditorialPrefix();
+        if (prefix.isNotEmpty) {
+          finalTitle = '$prefix: $fetchedTitle';
+        }
+      }
+
       setState(() {
-        _titleController.text = fetchedTitle;
+        _titleController.text = finalTitle;
         _keywordsController.text = keywordsString;
         _metadataDirty = true;
       });
@@ -441,8 +606,12 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         id: newFileId,
         path: fileToProcess.path,
         filename: fileToProcess.path.split(Platform.pathSeparator).last,
-        metadataTitle: fetchedTitle,
+        metadataTitle: finalTitle,
         metadataKeywords: keywordsString,
+        isEditorial: _isEditorial,
+        editorialCity: _editorialCityController.text,
+        editorialCountry: _editorialCountryController.text,
+        editorialDate: _editorialDate?.millisecondsSinceEpoch,
         createdAt:
             _selectedExistingFile?.createdAt ??
             DateTime.now().millisecondsSinceEpoch,
@@ -513,14 +682,65 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
             final List<dynamic> fetchedKeywords = metadata['keywords'] ?? [];
             final keywordsString = fetchedKeywords.join(', ');
 
+            // Если включён Эдиториал, формируем префикс индивидуально для каждого файла
+            String finalTitle = fetchedTitle;
+            String? batchCity;
+            String? batchCountry;
+            ({double? lat, double? lon, DateTime? date, bool hasAudio})?
+            batchExif;
+
+            if (_isEditorial) {
+              batchExif = await MetadataService.readExifLocationAndDate(path);
+              String localCity = '';
+              String localCountry = '';
+              String localDate = '';
+
+              if (batchExif.date != null) {
+                localDate = _formatEditorialDate(batchExif.date!);
+              }
+              if (batchExif.lat != null && batchExif.lon != null) {
+                final geo = await GeocodingService.resolve(
+                  batchExif.lat,
+                  batchExif.lon,
+                );
+                localCity = geo.city ?? '';
+                localCountry = geo.state ?? geo.country ?? '';
+              }
+
+              batchCity = localCity;
+              batchCountry = localCountry;
+
+              final locationParts = <String>[];
+              if (localCity.isNotEmpty) locationParts.add(localCity);
+              if (localCountry.isNotEmpty) locationParts.add(localCountry);
+              final location = locationParts.join(', ');
+
+              String prefix = '';
+              if (location.isNotEmpty && localDate.isNotEmpty) {
+                prefix = '$location - $localDate';
+              } else if (location.isNotEmpty) {
+                prefix = location;
+              } else if (localDate.isNotEmpty) {
+                prefix = localDate;
+              }
+
+              if (prefix.isNotEmpty) {
+                finalTitle = '$prefix: $fetchedTitle';
+              }
+            }
+
             // Save/Update DB
             final existing = fileObj is AppFile ? fileObj : null;
             final newFile = AppFile(
               id: existing?.id ?? const Uuid().v4(),
               path: path,
               filename: path.split(Platform.pathSeparator).last,
-              metadataTitle: fetchedTitle,
+              metadataTitle: finalTitle,
               metadataKeywords: keywordsString,
+              isEditorial: _isEditorial,
+              editorialCity: batchCity,
+              editorialCountry: batchCountry,
+              editorialDate: batchExif?.date?.millisecondsSinceEpoch,
               createdAt:
                   existing?.createdAt ?? DateTime.now().millisecondsSinceEpoch,
             );
@@ -533,7 +753,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                 // If this was the active selection, update controllers
                 if (_selectedExistingFile?.path == path ||
                     _selectedLocalInspectorFile?.path == path) {
-                  _titleController.text = fetchedTitle;
+                  // Обновляем UI поля инспектора на основе данных последнего обработанного файла
+                  _titleController.text = finalTitle;
                   _keywordsController.text = keywordsString;
                   _selectedExistingFile = newFile;
                   _selectedLocalInspectorFile = null;
@@ -571,6 +792,10 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         filename: _selectedExistingFile!.filename,
         metadataTitle: title,
         metadataKeywords: keywords,
+        isEditorial: _isEditorial,
+        editorialCity: _editorialCityController.text,
+        editorialCountry: _editorialCountryController.text,
+        editorialDate: _editorialDate?.millisecondsSinceEpoch,
         createdAt: _selectedExistingFile!.createdAt,
       );
       await ref.read(filesProvider.notifier).updateFile(updatedFile);
@@ -578,12 +803,14 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         _selectedExistingFile = updatedFile;
       });
 
-      // Also write to original file
-      await MetadataService.writeMetadata(
-        filePath: updatedFile.path,
-        title: title,
-        keywords: keywords,
-      );
+      // Also write to original file if it's an image
+      if (!_isVideo(updatedFile.path)) {
+        await MetadataService.writeMetadata(
+          filePath: updatedFile.path,
+          title: title,
+          keywords: keywords,
+        );
+      }
 
       setState(() => _metadataDirty = false);
       _showSuccess('Изменения сохранены в БД и в файл.');
@@ -596,6 +823,10 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
             .last,
         metadataTitle: title,
         metadataKeywords: keywords,
+        isEditorial: _isEditorial,
+        editorialCity: _editorialCityController.text,
+        editorialCountry: _editorialCountryController.text,
+        editorialDate: _editorialDate?.millisecondsSinceEpoch,
         createdAt: DateTime.now().millisecondsSinceEpoch,
       );
       await ref.read(filesProvider.notifier).addFile(newFile);
@@ -607,12 +838,14 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         _selectedLocalInspectorFile = null;
       });
 
-      // Also write to original file
-      await MetadataService.writeMetadata(
-        filePath: newFile.path,
-        title: title,
-        keywords: keywords,
-      );
+      // Also write to original file if it's an image
+      if (!_isVideo(newFile.path)) {
+        await MetadataService.writeMetadata(
+          filePath: newFile.path,
+          title: title,
+          keywords: keywords,
+        );
+      }
 
       setState(() => _metadataDirty = false);
       _showSuccess('Файл добавлен в БД и метаданные записаны в файл.');
@@ -634,8 +867,10 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       final prefix = wp.endsWith(sep) ? wp : wp + sep;
       for (final f in dbFiles) {
         if (f.path != wp && !f.path.startsWith(prefix)) continue;
-        final hasMeta = (f.metadataTitle != null && f.metadataTitle!.trim().isNotEmpty) ||
-            (f.metadataKeywords != null && f.metadataKeywords!.trim().isNotEmpty);
+        final hasMeta =
+            (f.metadataTitle != null && f.metadataTitle!.trim().isNotEmpty) ||
+            (f.metadataKeywords != null &&
+                f.metadataKeywords!.trim().isNotEmpty);
         if (hasMeta) toSave.add(f);
       }
     }
@@ -645,6 +880,11 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
     }
     int saved = 0;
     for (final f in toSave) {
+      if (_isVideo(f.path)) {
+        // Just count as saved for the DB, since we don't write Exif to video files.
+        saved++;
+        continue;
+      }
       final ok = await MetadataService.writeMetadata(
         filePath: f.path,
         title: f.metadataTitle?.trim() ?? '',
@@ -652,7 +892,10 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       );
       if (ok) saved++;
     }
-    if (mounted) _showSuccess('Сохранить все: записано $saved из ${toSave.length} файлов.');
+    if (mounted)
+      _showSuccess(
+        'Сохранить все: записано $saved из ${toSave.length} файлов.',
+      );
   }
 
   void _showSuccess(String message) {
@@ -660,7 +903,9 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: isDark ? AppTheme.successColorDark : AppTheme.successColor,
+        backgroundColor: isDark
+            ? AppTheme.successColorDark
+            : AppTheme.successColor,
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -683,25 +928,74 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         const SizedBox(height: 12),
         LayoutBuilder(
           builder: (context, constraints) {
-            const crossAxisCount = 3;
+            const crossAxisCount = 5;
             const spacing = 6.0;
-            final size = (constraints.maxWidth - spacing * (crossAxisCount - 1)) / crossAxisCount;
-            return Wrap(
-              spacing: spacing,
-              runSpacing: spacing,
-              children: paths.map((path) {
-                return SizedBox(
+            const maxVisible = crossAxisCount * crossAxisCount;
+
+            final size =
+                (constraints.maxWidth - spacing * (crossAxisCount - 1)) /
+                crossAxisCount;
+
+            final isOverflow = paths.length > maxVisible;
+            final limit = isOverflow ? maxVisible - 1 : paths.length;
+
+            final children = <Widget>[];
+
+            for (var i = 0; i < limit; i++) {
+              children.add(
+                SizedBox(
                   width: size,
                   height: size,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(6),
-                    child: _thumbnailForPath(context, path),
+                    child: _thumbnailForPath(context, paths[i]),
                   ),
-                );
-              }).toList(),
+                ),
+              );
+            }
+
+            if (isOverflow) {
+              final remaining = paths.length - limit;
+              children.add(
+                SizedBox(
+                  width: size,
+                  height: size,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _thumbnailForPath(context, paths[limit]),
+                        Container(
+                          color: Colors.black.withAlpha(
+                            150,
+                          ), // Semi-transparent black overlay
+                          alignment: Alignment.center,
+                          child: Text(
+                            '+$remaining',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            return Wrap(
+              spacing: spacing,
+              runSpacing: spacing,
+              children: children,
             );
           },
         ),
+        _buildEditorialSection(context, colorScheme, isMulti: true),
+        const SizedBox(height: 16),
         const SizedBox(height: 16),
         Text(
           'Кнопка «AI Tag» в левой панели — генерация тегов для всех выбранных',
@@ -718,18 +1012,20 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
   /// для текущей рабочей области (_currentScopedResource в _loadCurrentWorkspaceFiles).
   Widget _thumbnailForPath(BuildContext context, String path) {
     final cs = Theme.of(context).colorScheme;
-    final isVideo = ['.mp4', '.mov', '.avi', '.mkv', '.m4v']
-        .any((e) => path.toLowerCase().endsWith(e));
+    final isVideo = [
+      '.mp4',
+      '.mov',
+      '.avi',
+      '.mkv',
+      '.m4v',
+    ].any((e) => path.toLowerCase().endsWith(e));
     if (isVideo) {
       return Container(
         color: cs.surfaceContainerHighest,
         child: Icon(Icons.videocam, color: cs.primary.withValues(alpha: 0.5)),
       );
     }
-    return Image.file(
-      File(path),
-      fit: BoxFit.cover,
-    );
+    return Image.file(File(path), fit: BoxFit.cover);
   }
 
   Widget _buildTopBar(ColorScheme colorScheme) {
@@ -737,16 +1033,20 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
     final folderName = workspacePath == null || workspacePath.isEmpty
         ? ''
         : workspacePath.split(Platform.pathSeparator).last;
-    return ref.watch(filesProvider).when(
+    return ref
+        .watch(filesProvider)
+        .when(
           data: (dbFiles) {
             final sep = Platform.pathSeparator;
             final dbCount = workspacePath == null || workspacePath.isEmpty
                 ? 0
                 : dbFiles
-                    .where((f) =>
-                        f.path == workspacePath ||
-                        f.path.startsWith(workspacePath + sep))
-                    .length;
+                      .where(
+                        (f) =>
+                            f.path == workspacePath ||
+                            f.path.startsWith(workspacePath + sep),
+                      )
+                      .length;
             final total = dbCount + _localFiles.length;
             return Container(
               height: 48,
@@ -805,7 +1105,11 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
             ),
             child: Row(
               children: [
-                Icon(Icons.folder_outlined, size: 20, color: colorScheme.outline),
+                Icon(
+                  Icons.folder_outlined,
+                  size: 20,
+                  color: colorScheme.outline,
+                ),
                 const SizedBox(width: 10),
                 Text(
                   folderName.isEmpty ? '—' : folderName,
@@ -831,13 +1135,22 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       final prefix = wp.endsWith(sep) ? wp : wp + sep;
       for (final f in dbFiles) {
         if (f.path != wp && !f.path.startsWith(prefix)) continue;
-        final hasMeta = (f.metadataTitle != null && f.metadataTitle!.trim().isNotEmpty) ||
-            (f.metadataKeywords != null && f.metadataKeywords!.trim().isNotEmpty);
+        if (_isVideoPath(f.path)) continue; // видео не сохраняем в exif
+        final hasMeta =
+            (f.metadataTitle != null && f.metadataTitle!.trim().isNotEmpty) ||
+            (f.metadataKeywords != null &&
+                f.metadataKeywords!.trim().isNotEmpty);
         if (hasMeta) saveAllCount++;
       }
     }
-    final hasSelection = _selectedExistingFile != null || _selectedLocalInspectorFile != null;
-    final saveCount = (_metadataDirty && hasSelection) ? 1 : 0;
+    final hasSelection =
+        _selectedExistingFile != null || _selectedLocalInspectorFile != null;
+    final focusedPath =
+        _selectedExistingFile?.path ?? _selectedLocalInspectorFile?.path;
+    final isFocusedVideo = focusedPath != null && _isVideoPath(focusedPath);
+    final saveCount = (_metadataDirty && hasSelection && !isFocusedVideo)
+        ? 1
+        : 0;
 
     return Container(
       height: 44,
@@ -845,13 +1158,17 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLow.withValues(alpha: 0.3),
         border: Border(
-          bottom: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+          bottom: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+          ),
         ),
       ),
       child: Row(
         children: [
           Tooltip(
-            message: _selectedPaths.isEmpty ? 'Выделить всё' : 'Снять выделение',
+            message: _selectedPaths.isEmpty
+                ? 'Выделить всё'
+                : 'Снять выделение',
             child: IconButton(
               onPressed: () {
                 final wp = ref.read(workspacesProvider).currentPath;
@@ -860,9 +1177,11 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                   final dbInWorkspace = wp == null || wp.isEmpty
                       ? <AppFile>[]
                       : dbFiles
-                          .where((f) =>
-                              f.path == wp || f.path.startsWith(wp + sep))
-                          .toList();
+                            .where(
+                              (f) =>
+                                  f.path == wp || f.path.startsWith(wp + sep),
+                            )
+                            .toList();
                   _selectAll(dbInWorkspace, _localFiles);
                 });
               },
@@ -895,59 +1214,245 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
               ),
             ),
           ),
-          const SizedBox(width: 8),
-          Tooltip(
-            message: 'Снять выделение',
-            child: IconButton(
-              onPressed: _selectedPaths.isEmpty
-                  ? null
-                  : () {
-                      setState(() {
-                        _selectedPaths.clear();
-                        _selectedExistingFile = null;
-                        _selectedLocalInspectorFile = null;
-                      });
-                    },
-              icon: Icon(
-                Icons.delete_outline,
-                size: 22,
-                color: _selectedPaths.isEmpty
-                    ? colorScheme.onSurface.withValues(alpha: 0.4)
-                    : colorScheme.primary,
-              ),
-            ),
-          ),
+
           const SizedBox(width: 16),
-          // Сохранить все — метаданные всех рабочих областей
+          // Сохранить все — метаданные всех рабочих областей (кроме видео)
           Tooltip(
-            message: 'Сохранить метаданные всех файлов во всех рабочих областях',
+            message:
+                'Сохранить метаданные в файлы (кроме видео) во всех рабочих областях',
             child: FilledButton.icon(
               onPressed: saveAllCount > 0 ? _saveAllMetadata : null,
               icon: const Icon(Icons.save, size: 18),
               label: Text('Сохранить все ($saveAllCount)'),
               style: FilledButton.styleFrom(
                 backgroundColor: saveAllCount > 0 ? colorScheme.primary : null,
-                foregroundColor: saveAllCount > 0 ? colorScheme.onPrimary : null,
+                foregroundColor: saveAllCount > 0
+                    ? colorScheme.onPrimary
+                    : null,
               ),
             ),
           ),
           const SizedBox(width: 8),
-          // Сохранить — только выбранный файл с несохранёнными изменениями
+          // Сохранить — только выбранный файл (disabled для видео)
           Tooltip(
-            message: 'Сохранить метаданные выбранного файла в БД и в файл',
+            message: isFocusedVideo
+                ? 'Для видео файлов запись метаданных в файл недоступна'
+                : 'Сохранить метаданные выбранного файла в БД и в файл',
             child: FilledButton.icon(
               onPressed: saveCount > 0 ? _saveChanges : null,
               icon: const Icon(Icons.save_outlined, size: 18),
               label: Text('Сохранить ($saveCount)'),
               style: FilledButton.styleFrom(
-                backgroundColor: saveCount > 0 ? colorScheme.primaryContainer : null,
-                foregroundColor: saveCount > 0 ? colorScheme.onPrimaryContainer : null,
+                backgroundColor: saveCount > 0
+                    ? colorScheme.primaryContainer
+                    : null,
+                foregroundColor: saveCount > 0
+                    ? colorScheme.onPrimaryContainer
+                    : null,
               ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  Widget _buildFilterBar(ColorScheme colorScheme) {
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          // Search field
+          SizedBox(
+            width: 220,
+            height: 32,
+            child: TextField(
+              controller: _searchController,
+              style: const TextStyle(fontSize: 13),
+              decoration: InputDecoration(
+                hintText: 'Поиск по имени...',
+                hintStyle: TextStyle(
+                  fontSize: 13,
+                  color: colorScheme.onSurface.withValues(alpha: 0.4),
+                ),
+                prefixIcon: Icon(
+                  Icons.search,
+                  size: 18,
+                  color: colorScheme.onSurface.withValues(alpha: 0.5),
+                ),
+                suffixIcon: _searchQuery.isNotEmpty
+                    ? GestureDetector(
+                        onTap: () {
+                          _searchController.clear();
+                          setState(() => _searchQuery = '');
+                        },
+                        child: Icon(
+                          Icons.close,
+                          size: 16,
+                          color: colorScheme.onSurface.withValues(alpha: 0.5),
+                        ),
+                      )
+                    : null,
+                filled: true,
+                fillColor: colorScheme.surfaceContainerHighest.withValues(
+                  alpha: 0.5,
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  vertical: 0,
+                  horizontal: 12,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide.none,
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide.none,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: colorScheme.primary, width: 1),
+                ),
+              ),
+              onChanged: (value) => setState(() => _searchQuery = value),
+            ),
+          ),
+          const SizedBox(width: 12),
+          // Filter chips
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _filterChip(
+                label: 'Все',
+                icon: Icons.grid_view_rounded,
+                isActive: _filterType == 'all',
+                onTap: () => setState(() => _filterType = 'all'),
+                colorScheme: colorScheme,
+              ),
+              const SizedBox(width: 6),
+              _filterChip(
+                label: 'Фото',
+                icon: Icons.image_outlined,
+                isActive: _filterType == 'images',
+                onTap: () => setState(() => _filterType = 'images'),
+                colorScheme: colorScheme,
+              ),
+              const SizedBox(width: 6),
+              _filterChip(
+                label: 'Видео',
+                icon: Icons.videocam_outlined,
+                isActive: _filterType == 'videos',
+                onTap: () => setState(() => _filterType = 'videos'),
+                colorScheme: colorScheme,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _filterChip({
+    required String label,
+    required IconData icon,
+    required bool isActive,
+    required VoidCallback onTap,
+    required ColorScheme colorScheme,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        height: 30,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: isActive
+              ? colorScheme.primary
+              : colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(20),
+          border: isActive
+              ? null
+              : Border.all(
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.4),
+                  width: 1,
+                ),
+        ),
+        alignment: Alignment.center,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 14,
+              color: isActive
+                  ? colorScheme.onPrimary
+                  : colorScheme.onSurface.withValues(alpha: 0.6),
+            ),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+                color: isActive
+                    ? colorScheme.onPrimary
+                    : colorScheme.onSurface.withValues(alpha: 0.6),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static const _months = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+
+  String _formatEditorialDate(DateTime date) {
+    return '${_months[date.month - 1]} ${date.day} ${date.year}';
+  }
+
+  /// Формирует editorial prefix: "CITY, COUNTRY - MONTH DAY YEAR"
+  String _formatEditorialPrefix() {
+    final city = _editorialCityController.text.trim();
+    final country = _editorialCountryController.text.trim();
+    final datePart = _editorialDate != null
+        ? _formatEditorialDate(_editorialDate!)
+        : '';
+
+    final locationParts = <String>[];
+    if (city.isNotEmpty) locationParts.add(city);
+    if (country.isNotEmpty) locationParts.add(country);
+    final location = locationParts.join(', ');
+
+    if (location.isNotEmpty && datePart.isNotEmpty) {
+      return '$location - $datePart';
+    } else if (location.isNotEmpty) {
+      return location;
+    } else if (datePart.isNotEmpty) {
+      return datePart;
+    }
+    return '';
   }
 
   void _showError(String message) {
@@ -982,477 +1487,635 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
     });
     ref.listen(refreshWorkspaceProvider, (prev, next) {
       if (next > 0 && currentPath != null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => _refreshCurrentWorkspace());
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _refreshCurrentWorkspace(),
+        );
       }
     });
 
-    return Row(
-      children: [
-        // Основная область: верхняя панель (папка + счётчик) + панель инструментов + сетка
-        Expanded(
-          child: Column(
-            children: [
-              _buildTopBar(colorScheme),
-              _buildToolsBar(colorScheme),
-              // Grid Area
-              Expanded(
-                child: DropTarget(
-                  onDragEntered: (_) => setState(() => _isDragging = true),
-                  onDragExited: (_) => setState(() => _isDragging = false),
-                  onDragDone: (details) {
-                    setState(() => _isDragging = false);
-                    if (details.files.isNotEmpty) {
-                      final dbFiles = ref.read(filesProvider).value ?? [];
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyA, meta: true):
+            _handleSelectAll,
+        const SingleActivator(LogicalKeyboardKey.keyA, control: true):
+            _handleSelectAll,
+      },
+      child: Focus(
+        autofocus: true,
+        child: Row(
+          children: [
+            // Основная область: верхняя панель (папка + счётчик) + панель инструментов + сетка
+            Expanded(
+              child: Column(
+                children: [
+                  _buildTopBar(colorScheme),
+                  _buildToolsBar(colorScheme),
+                  _buildFilterBar(colorScheme),
+                  // Grid Area
+                  Expanded(
+                    child: DropTarget(
+                      onDragEntered: (_) => setState(() => _isDragging = true),
+                      onDragExited: (_) => setState(() => _isDragging = false),
+                      onDragDone: (details) {
+                        setState(() => _isDragging = false);
+                        if (details.files.isNotEmpty) {
+                          final dbFiles = ref.read(filesProvider).value ?? [];
 
-                      setState(() {
-                        for (int i = 0; i < details.files.length; i++) {
-                          final xFile = details.files[i];
-                          final path = xFile.path;
-                          final existingFile = dbFiles.firstWhereOrNull(
-                            (f) => f.path == path,
-                          );
+                          setState(() {
+                            for (int i = 0; i < details.files.length; i++) {
+                              final xFile = details.files[i];
+                              final path = xFile.path;
+                              final existingFile = dbFiles.firstWhereOrNull(
+                                (f) => f.path == path,
+                              );
 
-                          if (existingFile != null) {
-                            _selectedPaths.add(path);
-                            // Set as active if it's the first or only one
-                            if (i == 0) {
-                              _selectedExistingFile = existingFile;
-                              _selectedLocalInspectorFile = null;
-                              _titleController.text =
-                                  existingFile.metadataTitle ?? '';
-                              _keywordsController.text =
-                                  existingFile.metadataKeywords ?? '';
+                              if (existingFile != null) {
+                                _selectedPaths.add(path);
+                                // Set as active if it's the first or only one
+                                if (i == 0) {
+                                  _selectedExistingFile = existingFile;
+                                  _selectedLocalInspectorFile = null;
+                                  _titleController.text =
+                                      existingFile.metadataTitle ?? '';
+                                  _keywordsController.text =
+                                      existingFile.metadataKeywords ?? '';
+                                }
+                              } else {
+                                final newFile = File(path);
+                                if (!_localFiles.any((f) => f.path == path)) {
+                                  _localFiles.add(newFile);
+                                }
+                                _selectedPaths.add(path);
+                                // Set as active if it's the first or only one
+                                if (i == 0) {
+                                  _selectedLocalInspectorFile = newFile;
+                                  _selectedExistingFile = null;
+                                  _clearResults();
+                                }
+                              }
                             }
-                          } else {
-                            final newFile = File(path);
-                            if (!_localFiles.any((f) => f.path == path)) {
-                              _localFiles.add(newFile);
-                            }
-                            _selectedPaths.add(path);
-                            // Set as active if it's the first or only one
-                            if (i == 0) {
-                              _selectedLocalInspectorFile = newFile;
-                              _selectedExistingFile = null;
-                              _clearResults();
-                            }
-                          }
+                          });
                         }
-                      });
-                    }
-                  },
-                  child: Container(
-                    color: _isDragging
-                        ? colorScheme.primary.withValues(alpha: 0.05)
-                        : null,
-                    child: Builder(
-                      builder: (context) {
-                        final filesState = ref.watch(filesProvider);
+                      },
+                      child: Container(
+                        color: _isDragging
+                            ? colorScheme.primary.withValues(alpha: 0.05)
+                            : null,
+                        child: Builder(
+                          builder: (context) {
+                            final filesState = ref.watch(filesProvider);
 
-                        return filesState.when(
-                          loading: () =>
-                              const Center(child: CircularProgressIndicator()),
-                          error: (e, _) =>
-                              Center(child: Text('Failed to load files: $e')),
-                          data: (dbFiles) {
-                            final sep = Platform.pathSeparator;
-                            final workspacePath =
-                                ref.read(workspacesProvider).currentPath;
-                            final dbFilesInWorkspace = workspacePath == null ||
-                                    workspacePath.isEmpty
-                                ? <AppFile>[]
-                                : dbFiles.where((f) {
-                                    final p = f.path;
-                                    return p == workspacePath ||
-                                        p.startsWith(workspacePath + sep);
-                                  }).toList();
+                            return filesState.when(
+                              loading: () => const Center(
+                                child: CircularProgressIndicator(),
+                              ),
+                              error: (e, _) => Center(
+                                child: Text('Failed to load files: $e'),
+                              ),
+                              data: (dbFiles) {
+                                final sep = Platform.pathSeparator;
+                                final workspacePath = ref
+                                    .read(workspacesProvider)
+                                    .currentPath;
+                                final dbFilesInWorkspace =
+                                    workspacePath == null ||
+                                        workspacePath.isEmpty
+                                    ? <AppFile>[]
+                                    : dbFiles.where((f) {
+                                        final p = f.path;
+                                        return p == workspacePath ||
+                                            p.startsWith(workspacePath + sep);
+                                      }).toList();
 
-                            final currentLocalFiles = _localFiles
-                                .where(
-                                  (lf) => !dbFilesInWorkspace
-                                      .any((df) => df.path == lf.path),
-                                )
-                                .toList();
-
-                            if (workspacePath == null ||
-                                workspacePath.isEmpty) {
-                              return Center(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.folder_open_outlined,
-                                      size: 64,
-                                      color: colorScheme.outline,
-                                    ),
-                                    const SizedBox(height: 16),
-                                    Text(
-                                      'Выберите папку в списке слева\nили нажмите «Добавить папку»',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: colorScheme.onSurface
-                                            .withValues(alpha: 0.6),
+                                final currentLocalFiles = _localFiles
+                                    .where(
+                                      (lf) => !dbFilesInWorkspace.any(
+                                        (df) => df.path == lf.path,
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }
+                                    )
+                                    .toList();
 
-                            if (dbFilesInWorkspace.isEmpty &&
-                                currentLocalFiles.isEmpty) {
-                              return Center(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.photo_library_outlined,
-                                      size: 64,
-                                      color: colorScheme.outline,
-                                    ),
-                                    const SizedBox(height: 16),
-                                    Text(
-                                      'В этой папке нет изображений.\nНажмите «Обновить» в левой панели.\nЕсли файлы есть — выдайте приложению доступ к диску\n(Системные настройки → Конфиденциальность → Полный доступ к диску).',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: colorScheme.onSurface
-                                            .withValues(alpha: 0.6),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 16),
-                                    OutlinedButton.icon(
-                                      onPressed: _pickFile,
-                                      icon: const Icon(Icons.add, size: 18),
-                                      label: const Text('Добавить папку'),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }
+                                // Применяем фильтры
+                                final filtered = _applyFilters(
+                                  currentLocalFiles,
+                                  dbFilesInWorkspace,
+                                );
+                                final filteredLocals = filtered.locals;
+                                final filteredDb = filtered.db;
 
-                            return GridView.builder(
-                              padding: const EdgeInsets.all(24),
-                              gridDelegate:
-                                  const SliverGridDelegateWithMaxCrossAxisExtent(
-                                    maxCrossAxisExtent: 220,
-                                    crossAxisSpacing: 16,
-                                    mainAxisSpacing: 16,
-                                    childAspectRatio: 0.85,
-                                  ),
-                              itemCount: currentLocalFiles.length +
-                                  dbFilesInWorkspace.length,
-                              itemBuilder: (context, index) {
-                                if (index < currentLocalFiles.length) {
-                                  final file = currentLocalFiles[index];
-                                  return _GridCard(
-                                    imagePath: file.path,
-                                    filename: file.path
-                                        .split(Platform.pathSeparator)
-                                        .last,
-                                    isTagged: false,
-                                    isSelected: _selectedPaths.contains(
-                                      file.path,
-                                    ),
-                                    onTap: () => _toggleSelection(
-                                      file.path,
-                                      local: file,
+                                if (workspacePath == null ||
+                                    workspacePath.isEmpty) {
+                                  return Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.folder_open_outlined,
+                                          size: 64,
+                                          color: colorScheme.outline,
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          'Выберите папку в списке слева\nили нажмите «Добавить папку»',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: colorScheme.onSurface
+                                                .withValues(alpha: 0.6),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   );
                                 }
 
-                                final dbIdx = index - currentLocalFiles.length;
-                                final appFile = dbFilesInWorkspace[dbIdx];
-                                final isSelected = _selectedPaths.contains(
-                                  appFile.path,
-                                );
-                                final isTagged =
-                                    appFile.metadataKeywords != null &&
-                                    appFile.metadataKeywords!.isNotEmpty;
+                                if (filteredLocals.isEmpty &&
+                                    filteredDb.isEmpty) {
+                                  // Различаем: нет файлов вообще или фильтр пуст
+                                  final totalUnfiltered =
+                                      currentLocalFiles.length +
+                                      dbFilesInWorkspace.length;
+                                  if (totalUnfiltered == 0) {
+                                    return Center(
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.photo_library_outlined,
+                                            size: 64,
+                                            color: colorScheme.outline,
+                                          ),
+                                          const SizedBox(height: 16),
+                                          Text(
+                                            'В этой папке нет изображений.\nНажмите «Обновить» в левой панели.\nЕсли файлы есть — выдайте приложению доступ к диску\n(Системные настройки → Конфиденциальность → Полный доступ к диску).',
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              fontSize: 13,
+                                              color: colorScheme.onSurface
+                                                  .withValues(alpha: 0.6),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 16),
+                                          OutlinedButton.icon(
+                                            onPressed: _pickFile,
+                                            icon: const Icon(
+                                              Icons.add,
+                                              size: 18,
+                                            ),
+                                            label: const Text('Добавить папку'),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  }
+                                  return Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.filter_list_off,
+                                          size: 64,
+                                          color: colorScheme.outline,
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          'Нет файлов, подходящих под фильтр.',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: colorScheme.onSurface
+                                                .withValues(alpha: 0.6),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }
 
-                                return _GridCard(
-                                  imagePath: appFile.path,
-                                  filename: appFile.filename,
-                                  isTagged: isTagged,
-                                  isSelected: isSelected,
-                                  onTap: () => _toggleSelection(
-                                    appFile.path,
-                                    existing: appFile,
+                                // Объединяем все в один отсортированный список,
+                                // чтобы позиция файла не менялась при переходе local → db
+                                final List<
+                                  ({
+                                    String path,
+                                    String filename,
+                                    bool isTagged,
+                                    AppFile? existing,
+                                    File? local,
+                                  })
+                                >
+                                allItems = [];
+
+                                for (final f in filteredLocals) {
+                                  allItems.add((
+                                    path: f.path,
+                                    filename: f.path
+                                        .split(Platform.pathSeparator)
+                                        .last,
+                                    isTagged: false,
+                                    existing: null,
+                                    local: f,
+                                  ));
+                                }
+                                for (final f in filteredDb) {
+                                  allItems.add((
+                                    path: f.path,
+                                    filename: f.filename,
+                                    isTagged:
+                                        f.metadataKeywords != null &&
+                                        f.metadataKeywords!.isNotEmpty,
+                                    existing: f,
+                                    local: null,
+                                  ));
+                                }
+
+                                allItems.sort(
+                                  (a, b) => a.filename.toLowerCase().compareTo(
+                                    b.filename.toLowerCase(),
                                   ),
+                                );
+
+                                final allPaths = allItems
+                                    .map((e) => e.path)
+                                    .toList();
+
+                                return GridView.builder(
+                                  padding: const EdgeInsets.all(24),
+                                  gridDelegate:
+                                      const SliverGridDelegateWithMaxCrossAxisExtent(
+                                        maxCrossAxisExtent: 220,
+                                        crossAxisSpacing: 16,
+                                        mainAxisSpacing: 16,
+                                        childAspectRatio: 0.85,
+                                      ),
+                                  itemCount: allItems.length,
+                                  itemBuilder: (context, index) {
+                                    final item = allItems[index];
+                                    return _GridCard(
+                                      imagePath: item.path,
+                                      filename: item.filename,
+                                      isTagged: item.isTagged,
+                                      isSelected: _selectedPaths.contains(
+                                        item.path,
+                                      ),
+                                      onTap: () => _toggleSelection(
+                                        index,
+                                        item.path,
+                                        allPaths,
+                                        existing: item.existing,
+                                        local: item.local,
+                                      ),
+                                    );
+                                  },
                                 );
                               },
                             );
                           },
-                        );
-                      },
+                        ),
+                      ),
                     ),
                   ),
-                ),
+                ],
               ),
-            ],
-          ),
-        ),
+            ),
 
-        // Right Panel (IMS-style: miniatures when multi, one image + tags when single)
-        Container(
-          width: 320,
-          decoration: BoxDecoration(
-            color: colorScheme.surface,
-            border: Border(left: BorderSide(color: colorScheme.outline)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Container(
-                height: 48,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(color: colorScheme.outlineVariant),
-                  ),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      _selectedPaths.isEmpty
-                          ? 'Детали'
-                          : _selectedPaths.length == 1
+            // Right Panel (IMS-style: miniatures when multi, one image + tags when single)
+            Container(
+              width: 320,
+              decoration: BoxDecoration(
+                color: colorScheme.surface,
+                border: Border(left: BorderSide(color: colorScheme.outline)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    height: 48,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(color: colorScheme.outlineVariant),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          _selectedPaths.isEmpty
+                              ? 'Детали'
+                              : _selectedPaths.length == 1
                               ? 'Изображение'
                               : 'Выбрано',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
-                    if (_selectedPaths.isNotEmpty)
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 20),
-                        onPressed: () {
-                          setState(() {
-                            _selectedPaths.clear();
-                            _selectedExistingFile = null;
-                            _selectedLocalInspectorFile = null;
-                          });
-                        },
-                      ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: _selectedPaths.isEmpty
-                    ? Center(
-                        child: Text(
-                          'Выберите изображение',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: colorScheme.onSurface.withValues(alpha: 0.5),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
                           ),
                         ),
-                      )
-                    : _selectedPaths.length > 1
-                        ? _buildMultiSelectPanel(colorScheme)
-                        : ListView(
-                        padding: const EdgeInsets.all(16),
-                        children: [
-                          // Image Preview
-                          Container(
-                            height: 180,
-                            decoration: BoxDecoration(
-                              color: colorScheme.outlineVariant,
-                              borderRadius: BorderRadius.circular(8),
-                              image: DecorationImage(
-                                image: FileImage(
-                                  File(
-                                    _selectedLocalInspectorFile?.path ??
-                                        _selectedExistingFile!.path,
-                                  ),
+                        if (_selectedPaths.isNotEmpty)
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 20),
+                            onPressed: () {
+                              setState(() {
+                                _selectedPaths.clear();
+                                _selectedExistingFile = null;
+                                _selectedLocalInspectorFile = null;
+                              });
+                            },
+                          ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: _selectedPaths.isEmpty
+                        ? Center(
+                            child: Text(
+                              'Выберите изображение',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: colorScheme.onSurface.withValues(
+                                  alpha: 0.5,
                                 ),
-                                fit: BoxFit.cover,
                               ),
                             ),
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                          )
+                        : _selectedPaths.length > 1 ||
+                              (_selectedLocalInspectorFile == null &&
+                                  _selectedExistingFile == null)
+                        ? _buildMultiSelectPanel(colorScheme)
+                        : ListView(
+                            padding: const EdgeInsets.all(16),
                             children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      (_selectedLocalInspectorFile?.path
-                                              .split(Platform.pathSeparator)
-                                              .last ??
-                                          _selectedExistingFile!.filename),
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 14,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    Text(
-                                      'Local File',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: colorScheme.onSurface.withValues(
-                                          alpha: 0.6,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
+                              // Image/Video Preview
                               Builder(
                                 builder: (context) {
-                                  final isDark = Theme.of(context).brightness == Brightness.dark;
-                                  final isEmpty = _keywordsController.text.isEmpty;
-                                  final bgColor = isEmpty
-                                      ? AppTheme.warningColor.withValues(alpha: 0.2)
-                                      : AppTheme.successColor.withValues(alpha: 0.2);
-                                  final fgColor = isEmpty
-                                      ? (isDark ? AppTheme.warningColorDark : AppTheme.warningColor)
-                                      : (isDark ? AppTheme.successColorDark : AppTheme.successColor);
+                                  final previewPath =
+                                      _selectedLocalInspectorFile?.path ??
+                                      _selectedExistingFile?.path ??
+                                      _selectedPaths.first;
+                                  final isVideo =
+                                      [
+                                        '.mp4',
+                                        '.mov',
+                                        '.avi',
+                                        '.mkv',
+                                        '.m4v',
+                                      ].any(
+                                        (ext) => previewPath
+                                            .toLowerCase()
+                                            .endsWith(ext),
+                                      );
+
+                                  if (isVideo) {
+                                    return Container(
+                                      height: 180,
+                                      width: double.infinity,
+                                      clipBehavior: Clip.antiAlias,
+                                      decoration: BoxDecoration(
+                                        color:
+                                            colorScheme.surfaceContainerHighest,
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: FutureBuilder(
+                                        future:
+                                            MetadataService.readExifLocationAndDate(
+                                              previewPath,
+                                            ),
+                                        builder: (context, snapshot) {
+                                          final hasAudio =
+                                              snapshot.data?.hasAudio ?? false;
+                                          return VideoPlayerWidget(
+                                            videoPath: previewPath,
+                                            hasAudio: hasAudio,
+                                          );
+                                        },
+                                      ),
+                                    );
+                                  }
+
                                   return Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
+                                    height: 180,
                                     decoration: BoxDecoration(
-                                      color: bgColor,
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      isEmpty ? 'Untagged' : 'Tagged',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                        color: fgColor,
+                                      color: colorScheme.outlineVariant,
+                                      borderRadius: BorderRadius.circular(8),
+                                      image: DecorationImage(
+                                        image: FileImage(File(previewPath)),
+                                        fit: BoxFit.cover,
                                       ),
                                     ),
                                   );
                                 },
                               ),
-                            ],
-                          ),
+                              const SizedBox(height: 12),
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          (_selectedLocalInspectorFile?.path
+                                                  .split(Platform.pathSeparator)
+                                                  .last ??
+                                              _selectedExistingFile!.filename),
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 14,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        Text(
+                                          'Local File',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: colorScheme.onSurface
+                                                .withValues(alpha: 0.6),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Builder(
+                                    builder: (context) {
+                                      final isDark =
+                                          Theme.of(context).brightness ==
+                                          Brightness.dark;
+                                      final isEmpty =
+                                          _keywordsController.text.isEmpty;
+                                      final bgColor = isEmpty
+                                          ? AppTheme.warningColor.withValues(
+                                              alpha: 0.2,
+                                            )
+                                          : AppTheme.successColor.withValues(
+                                              alpha: 0.2,
+                                            );
+                                      final fgColor = isEmpty
+                                          ? (isDark
+                                                ? AppTheme.warningColorDark
+                                                : AppTheme.warningColor)
+                                          : (isDark
+                                                ? AppTheme.successColorDark
+                                                : AppTheme.successColor);
+                                      return Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: bgColor,
+                                          borderRadius: BorderRadius.circular(
+                                            4,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          isEmpty ? 'Untagged' : 'Tagged',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            color: fgColor,
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ],
+                              ),
 
-                          const SizedBox(height: 24),
+                              const SizedBox(height: 16),
+                              _buildEditorialSection(
+                                context,
+                                colorScheme,
+                                isMulti: false,
+                              ),
 
-                          // Metadata Form
-                          _FormLabel('TITLE'),
-                          const SizedBox(height: 6),
-                          TextField(
-                            controller: _titleController,
-                            decoration: _inputDecoration(context),
-                            style: const TextStyle(fontSize: 14),
-                            onChanged: (_) => setState(() => _metadataDirty = true),
-                          ),
+                              // Metadata Form
+                              const _FormLabel('TITLE'),
+                              const SizedBox(height: 6),
+                              TextField(
+                                controller: _titleController,
+                                decoration: _inputDecoration(context),
+                                style: const TextStyle(fontSize: 14),
+                                onChanged: (_) =>
+                                    setState(() => _metadataDirty = true),
+                              ),
 
-                          const SizedBox(height: 16),
-                          _FormLabel('KEYWORDS'),
-                          const SizedBox(height: 6),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: FilledButton.icon(
-                                  onPressed: _isLoading ? null : _generateAI,
-                                  icon: const Icon(Icons.auto_awesome, size: 18),
-                                  label: const Text('Генерация AI'),
-                                  style: FilledButton.styleFrom(
-                                    backgroundColor: colorScheme.primary,
-                                    foregroundColor: colorScheme.onPrimary,
+                              const SizedBox(height: 16),
+                              _FormLabel('KEYWORDS'),
+                              const SizedBox(height: 6),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: FilledButton.icon(
+                                      onPressed: _isLoading
+                                          ? null
+                                          : _generateAI,
+                                      icon: const Icon(
+                                        Icons.auto_awesome,
+                                        size: 18,
+                                      ),
+                                      label: const Text('Генерация AI'),
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor: colorScheme.primary,
+                                        foregroundColor: colorScheme.onPrimary,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              const SizedBox(height: 6),
+                              TextField(
+                                controller: _keywordsController,
+                                maxLines: 4,
+                                decoration: _inputDecoration(context),
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  height: 1.5,
+                                ),
+                                onChanged: (_) =>
+                                    setState(() => _metadataDirty = true),
+                              ),
+                              if (_isLoading)
+                                const Padding(
+                                  padding: EdgeInsets.only(top: 8),
+                                  child: LinearProgressIndicator(),
+                                ),
+
+                              const SizedBox(height: 16),
+                              _FormLabel('CATEGORIES'),
+                              const SizedBox(height: 6),
+                              DropdownButtonFormField<String>(
+                                value: 'Urban & Architecture',
+                                decoration: _inputDecoration(context),
+                                items: const [
+                                  DropdownMenuItem(
+                                    value: 'Urban & Architecture',
+                                    child: Text(
+                                      'Urban & Architecture',
+                                      style: TextStyle(fontSize: 14),
+                                    ),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: 'Nature',
+                                    child: Text(
+                                      'Nature',
+                                      style: TextStyle(fontSize: 14),
+                                    ),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: 'People',
+                                    child: Text(
+                                      'People',
+                                      style: TextStyle(fontSize: 14),
+                                    ),
+                                  ),
+                                ],
+                                onChanged: (v) {},
+                              ),
+
+                              const SizedBox(height: 24),
+                              const Divider(),
+                              const SizedBox(height: 16),
+
+                              _FormLabel('STOCK STATUS'),
+                              const SizedBox(height: 12),
+
+                              _StockStatusCard(
+                                code: 'AS',
+                                label: 'Adobe Stock',
+                                color: Colors.red,
+                                isUploaded: false,
+                              ),
+                              const SizedBox(height: 8),
+                              _StockStatusCard(
+                                code: 'SS',
+                                label: 'Shutterstock',
+                                color: Colors.blue,
+                                isUploaded: true,
+                              ),
+
+                              const SizedBox(height: 32),
+                              FilledButton(
+                                onPressed: _saveChanges,
+                                style: FilledButton.styleFrom(
+                                  minimumSize: const Size.fromHeight(44),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
                                   ),
                                 ),
+                                child: const Text('Save Changes'),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 6),
-                          const SizedBox(height: 6),
-                          TextField(
-                            controller: _keywordsController,
-                            maxLines: 4,
-                            decoration: _inputDecoration(context),
-                            style: const TextStyle(fontSize: 14, height: 1.5),
-                            onChanged: (_) => setState(() => _metadataDirty = true),
-                          ),
-                          if (_isLoading)
-                            const Padding(
-                              padding: EdgeInsets.only(top: 8),
-                              child: LinearProgressIndicator(),
-                            ),
-
-                          const SizedBox(height: 16),
-                          _FormLabel('CATEGORIES'),
-                          const SizedBox(height: 6),
-                          DropdownButtonFormField<String>(
-                            value: 'Urban & Architecture',
-                            decoration: _inputDecoration(context),
-                            items: const [
-                              DropdownMenuItem(
-                                value: 'Urban & Architecture',
-                                child: Text(
-                                  'Urban & Architecture',
-                                  style: TextStyle(fontSize: 14),
-                                ),
-                              ),
-                              DropdownMenuItem(
-                                value: 'Nature',
-                                child: Text(
-                                  'Nature',
-                                  style: TextStyle(fontSize: 14),
-                                ),
-                              ),
-                              DropdownMenuItem(
-                                value: 'People',
-                                child: Text(
-                                  'People',
-                                  style: TextStyle(fontSize: 14),
-                                ),
-                              ),
-                            ],
-                            onChanged: (v) {},
-                          ),
-
-                          const SizedBox(height: 24),
-                          const Divider(),
-                          const SizedBox(height: 16),
-
-                          _FormLabel('STOCK STATUS'),
-                          const SizedBox(height: 12),
-
-                          _StockStatusCard(
-                            code: 'AS',
-                            label: 'Adobe Stock',
-                            color: Colors.red,
-                            isUploaded: false,
-                          ),
-                          const SizedBox(height: 8),
-                          _StockStatusCard(
-                            code: 'SS',
-                            label: 'Shutterstock',
-                            color: Colors.blue,
-                            isUploaded: true,
-                          ),
-
-                          const SizedBox(height: 32),
-                          FilledButton(
-                            onPressed: _saveChanges,
-                            style: FilledButton.styleFrom(
-                              minimumSize: const Size.fromHeight(44),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
-                            child: const Text('Save Changes'),
-                          ),
-                        ],
-                      ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 
@@ -1471,6 +2134,334 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         borderSide: BorderSide(color: colorScheme.primary),
       ),
       contentPadding: const EdgeInsets.all(12),
+    );
+  }
+
+  Future<void> _batchUpdateEditorial({
+    bool? isEditorial,
+    String? city,
+    String? country,
+    DateTime? date,
+  }) async {
+    final allFiles = ref.read(filesProvider).value ?? [];
+    final selectedPaths = _selectedPaths.toList();
+
+    for (final path in selectedPaths) {
+      final existingIndex = allFiles.indexWhere((f) => f.path == path);
+      if (existingIndex != -1) {
+        final f = allFiles[existingIndex];
+        final updated = AppFile(
+          id: f.id,
+          path: f.path,
+          filename: f.filename,
+          metadataTitle: f.metadataTitle,
+          metadataDescription: f.metadataDescription,
+          metadataKeywords: f.metadataKeywords,
+          isEditorial: isEditorial ?? f.isEditorial,
+          editorialCity: city ?? f.editorialCity,
+          editorialCountry: country ?? f.editorialCountry,
+          editorialDate: date != null
+              ? date.millisecondsSinceEpoch
+              : f.editorialDate,
+          createdAt: f.createdAt,
+        );
+        await ref.read(filesProvider.notifier).updateFile(updated);
+        if (_selectedExistingFile?.id == updated.id) {
+          _selectedExistingFile = updated;
+        }
+      }
+    }
+  }
+
+  Widget _buildEditorialSection(
+    BuildContext context,
+    ColorScheme colorScheme, {
+    required bool isMulti,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Editorial checkbox
+        Row(
+          children: [
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: Checkbox(
+                value: _isEditorial,
+                onChanged: (value) async {
+                  setState(() => _isEditorial = value ?? false);
+                  await _batchUpdateEditorial(isEditorial: _isEditorial);
+                },
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'Эдиториал',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: colorScheme.onSurface,
+              ),
+            ),
+          ],
+        ),
+
+        // Editorial fields (shown when checked)
+        if (_isEditorial) ...[
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const _FormLabel('LOCATION'),
+              const Spacer(),
+              SizedBox(
+                height: 28,
+                child: TextButton.icon(
+                  onPressed: () async {
+                    final filePath =
+                        _selectedExistingFile?.path ??
+                        _selectedLocalInspectorFile?.path;
+                    if (filePath == null) return;
+                    final exif = await MetadataService.readExifLocationAndDate(
+                      filePath,
+                    );
+                    if (exif.date != null) {
+                      setState(() => _editorialDate = exif.date);
+                    }
+                    if (exif.lat != null && exif.lon != null) {
+                      final geo = await GeocodingService.resolve(
+                        exif.lat,
+                        exif.lon,
+                      );
+                      setState(() {
+                        if (geo.city != null)
+                          _editorialCityController.text = geo.city!;
+                        if (geo.country != null || geo.state != null) {
+                          _editorialCountryController.text =
+                              geo.state ?? geo.country ?? '';
+                        }
+                      });
+                      await _batchUpdateEditorial(
+                        city: _editorialCityController.text,
+                        country: _editorialCountryController.text,
+                        date: _editorialDate,
+                      );
+                    }
+                  },
+                  icon: Icon(
+                    Icons.gps_fixed,
+                    size: 14,
+                    color: colorScheme.primary,
+                  ),
+                  label: Text(
+                    'Авто',
+                    style: TextStyle(fontSize: 11, color: colorScheme.primary),
+                  ),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: Size.zero,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Consumer(
+            builder: (context, ref, child) {
+              final savedLocations =
+                  ref.watch(settingsProvider).value?.savedLocations ?? [];
+              final cities = savedLocations
+                  .map((e) => e.split('|').first)
+                  .where((e) => e.isNotEmpty)
+                  .toSet()
+                  .toList();
+              final countries = savedLocations
+                  .map((e) => e.split('|').length > 1 ? e.split('|').last : '')
+                  .where((e) => e.isNotEmpty)
+                  .toSet()
+                  .toList();
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  RawAutocomplete<String>(
+                    textEditingController: _editorialCityController,
+                    focusNode: _cityFocusNode,
+                    optionsBuilder: (textEditingValue) {
+                      if (textEditingValue.text.isEmpty) {
+                        return cities;
+                      }
+                      return cities.where(
+                        (city) => city.toLowerCase().contains(
+                          textEditingValue.text.toLowerCase(),
+                        ),
+                      );
+                    },
+                    onSelected: (String selection) {
+                      if (_editorialCountryController.text.isEmpty) {
+                        final match = savedLocations.firstWhere(
+                          (loc) => loc.startsWith('$selection|'),
+                          orElse: () => '',
+                        );
+                        if (match.isNotEmpty) {
+                          _editorialCountryController.text = match
+                              .split('|')
+                              .last;
+                        }
+                      }
+                      _batchUpdateEditorial(
+                        city: selection,
+                        country: _editorialCountryController.text,
+                      );
+                    },
+                    fieldViewBuilder:
+                        (context, controller, focusNode, onFieldSubmitted) {
+                          return TextField(
+                            controller: controller,
+                            focusNode: focusNode,
+                            onChanged: (val) =>
+                                _batchUpdateEditorial(city: val),
+                            decoration: _inputDecoration(
+                              context,
+                            ).copyWith(hintText: 'Город'),
+                            style: const TextStyle(fontSize: 13),
+                          );
+                        },
+                    optionsViewBuilder: (context, onSelected, options) {
+                      return Align(
+                        alignment: Alignment.topLeft,
+                        child: Material(
+                          elevation: 8,
+                          borderRadius: BorderRadius.circular(8),
+                          color: colorScheme.surface,
+                          clipBehavior: Clip.antiAlias,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(
+                              maxHeight: 200,
+                              maxWidth: 296,
+                            ),
+                            child: ListView.builder(
+                              padding: EdgeInsets.zero,
+                              shrinkWrap: true,
+                              itemCount: options.length,
+                              itemBuilder: (context, index) {
+                                final option = options.elementAt(index);
+                                return ListTile(
+                                  dense: true,
+                                  title: Text(
+                                    option,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                  onTap: () => onSelected(option),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 6),
+                  RawAutocomplete<String>(
+                    textEditingController: _editorialCountryController,
+                    focusNode: _countryFocusNode,
+                    optionsBuilder: (textEditingValue) {
+                      if (textEditingValue.text.isEmpty) {
+                        return countries;
+                      }
+                      return countries.where(
+                        (country) => country.toLowerCase().contains(
+                          textEditingValue.text.toLowerCase(),
+                        ),
+                      );
+                    },
+                    onSelected: (selection) =>
+                        _batchUpdateEditorial(country: selection),
+                    fieldViewBuilder:
+                        (context, controller, focusNode, onFieldSubmitted) {
+                          return TextField(
+                            controller: controller,
+                            focusNode: focusNode,
+                            onChanged: (val) =>
+                                _batchUpdateEditorial(country: val),
+                            decoration: _inputDecoration(
+                              context,
+                            ).copyWith(hintText: 'Страна / Штат'),
+                            style: const TextStyle(fontSize: 13),
+                          );
+                        },
+                    optionsViewBuilder: (context, onSelected, options) {
+                      return Align(
+                        alignment: Alignment.topLeft,
+                        child: Material(
+                          elevation: 8,
+                          borderRadius: BorderRadius.circular(8),
+                          color: colorScheme.surface,
+                          clipBehavior: Clip.antiAlias,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(
+                              maxHeight: 200,
+                              maxWidth: 296,
+                            ),
+                            child: ListView.builder(
+                              padding: EdgeInsets.zero,
+                              shrinkWrap: true,
+                              itemCount: options.length,
+                              itemBuilder: (context, index) {
+                                final option = options.elementAt(index);
+                                return ListTile(
+                                  dense: true,
+                                  title: Text(
+                                    option,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                  onTap: () => onSelected(option),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              );
+            },
+          ),
+          if (_editorialDate != null) ...[
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest.withValues(
+                  alpha: 0.5,
+                ),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.calendar_today,
+                    size: 14,
+                    color: colorScheme.onSurface.withValues(alpha: 0.6),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _formatEditorialDate(_editorialDate!),
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: colorScheme.onSurface.withValues(alpha: 0.8),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+
+        const SizedBox(height: 16),
+      ],
     );
   }
 }
@@ -1512,123 +2503,136 @@ class _GridCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
+    return SingleClickArea(
+      onTap: onTap,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {}, // только рипл, клик обрабатывает SingleClickArea
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-            color: isSelected
-                ? colorScheme.primary.withValues(alpha: 0.05)
-                : Colors.transparent,
-            border: Border.all(
               color: isSelected
-                  ? colorScheme.primary.withValues(alpha: 0.3)
+                  ? colorScheme.primary.withValues(alpha: 0.05)
                   : Colors.transparent,
-              width: 1,
+              border: Border.all(
+                color: isSelected
+                    ? colorScheme.primary.withValues(alpha: 0.3)
+                    : Colors.transparent,
+                width: 1,
+              ),
+              borderRadius: BorderRadius.circular(12),
             ),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Builder(
-                  builder: (context) {
-                  final videoExtensions = [
-                    '.mp4',
-                    '.mov',
-                    '.avi',
-                    '.mkv',
-                    '.m4v',
-                  ];
-                  final isVideo = videoExtensions.any(
-                    (ext) => imagePath.toLowerCase().endsWith(ext),
-                  );
-
-                  return Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      border: isSelected
-                          ? Border.all(color: colorScheme.primary, width: 2)
-                          : Border.all(color: colorScheme.outline),
-                      color: isVideo
-                          ? colorScheme.surfaceContainerHighest
-                          : null,
-                      image: isVideo
-                          ? null
-                          : DecorationImage(
-                              image: FileImage(File(imagePath)),
-                              fit: BoxFit.cover,
-                            ),
-                    ),
-                    child: Stack(
-                      children: [
-                        if (isVideo)
-                          Center(
-                            child: Icon(
-                              Icons.videocam,
-                              size: 48,
-                              color: colorScheme.primary.withValues(alpha: 0.5),
-                            ),
-                          ),
-                        if (isSelected)
-                          Align(
-                            alignment: Alignment.topRight,
-                            child: Padding(
-                              padding: const EdgeInsets.all(8.0),
-                              child: Icon(
-                                Icons.check_circle,
-                                color: colorScheme.primary,
-                                size: 20,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  );
-                  },
-                ),
-              ),
-                const SizedBox(height: 8),
-              Text(
-                filename,
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 4),
-              Row(
-                children: [
-                  Builder(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Builder(
                     builder: (context) {
-                      final isDark = Theme.of(context).brightness == Brightness.dark;
-                      final dotColor = isTagged
-                          ? (isDark ? AppTheme.successColorDark : AppTheme.successColor)
-                          : (isDark ? AppTheme.warningColorDark : AppTheme.warningColor);
+                      final videoExtensions = [
+                        '.mp4',
+                        '.mov',
+                        '.avi',
+                        '.mkv',
+                        '.m4v',
+                      ];
+                      final isVideo = videoExtensions.any(
+                        (ext) => imagePath.toLowerCase().endsWith(ext),
+                      );
+
                       return Container(
-                        width: 6,
-                        height: 6,
                         decoration: BoxDecoration(
-                          color: dotColor,
-                          shape: BoxShape.circle,
+                          borderRadius: BorderRadius.circular(8),
+                          border: isSelected
+                              ? Border.all(color: colorScheme.primary, width: 2)
+                              : Border.all(color: colorScheme.outline),
+                          color: isVideo
+                              ? colorScheme.surfaceContainerHighest
+                              : null,
+                          image: isVideo
+                              ? null
+                              : DecorationImage(
+                                  image: FileImage(File(imagePath)),
+                                  fit: BoxFit.cover,
+                                ),
+                        ),
+                        child: Stack(
+                          children: [
+                            if (isVideo)
+                              Center(
+                                child: Icon(
+                                  Icons.videocam,
+                                  size: 48,
+                                  color: colorScheme.primary.withValues(
+                                    alpha: 0.5,
+                                  ),
+                                ),
+                              ),
+                            if (isSelected)
+                              Align(
+                                alignment: Alignment.topRight,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(8.0),
+                                  child: Icon(
+                                    Icons.check_circle,
+                                    color: colorScheme.primary,
+                                    size: 20,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       );
                     },
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    isTagged ? 'Tagged' : 'Untagged',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: colorScheme.onSurface.withValues(alpha: 0.6),
-                    ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  filename,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
                   ),
-                ],
-              ),
-            ],
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Builder(
+                      builder: (context) {
+                        final isDark =
+                            Theme.of(context).brightness == Brightness.dark;
+                        final dotColor = isTagged
+                            ? (isDark
+                                  ? AppTheme.successColorDark
+                                  : AppTheme.successColor)
+                            : (isDark
+                                  ? AppTheme.warningColorDark
+                                  : AppTheme.warningColor);
+                        return Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: dotColor,
+                            shape: BoxShape.circle,
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      isTagged ? 'Tagged' : 'Untagged',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: colorScheme.onSurface.withValues(alpha: 0.6),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1661,22 +2665,22 @@ class _SideActionIcon extends StatelessWidget {
           onTap: isActive ? onTap : null,
           borderRadius: BorderRadius.circular(8),
           child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 24, color: colorScheme.primary),
-                const SizedBox(height: 4),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: colorScheme.onSurface,
-                  ),
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 24, color: colorScheme.primary),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.onSurface,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
+      ),
     );
   }
 }

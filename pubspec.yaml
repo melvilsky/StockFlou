@@ -53,6 +53,8 @@ dependencies:
   pool: ^1.5.2
   path: ^1.9.1
   macos_secure_bookmarks: ^0.2.1
+  fc_native_video_thumbnail: ^0.17.2
+  video_player: ^2.10.1
 
 dev_dependencies:
   flutter_test:

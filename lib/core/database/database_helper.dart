@@ -24,7 +24,11 @@ class DatabaseHelper {
 
     return await databaseFactory.openDatabase(
       dbPath,
-      options: OpenDatabaseOptions(version: 1, onCreate: _createDB),
+      options: OpenDatabaseOptions(
+        version: 3,
+        onCreate: _createDB,
+        onUpgrade: _upgradeDB,
+      ),
     );
   }
 
@@ -37,9 +41,26 @@ CREATE TABLE files (
   metadata_title TEXT,
   metadata_description TEXT,
   metadata_keywords TEXT,
+  is_editorial INTEGER NOT NULL DEFAULT 0,
+  editorial_city TEXT,
+  editorial_country TEXT,
+  editorial_date INTEGER,
   created_at INTEGER NOT NULL
 )
 ''');
+  }
+
+  Future _upgradeDB(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute(
+        'ALTER TABLE files ADD COLUMN is_editorial INTEGER NOT NULL DEFAULT 0',
+      );
+    }
+    if (oldVersion < 3) {
+      await db.execute('ALTER TABLE files ADD COLUMN editorial_city TEXT');
+      await db.execute('ALTER TABLE files ADD COLUMN editorial_country TEXT');
+      await db.execute('ALTER TABLE files ADD COLUMN editorial_date INTEGER');
+    }
   }
 
   Future<void> insertFile(AppFile file) async {

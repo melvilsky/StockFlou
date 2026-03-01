@@ -30,10 +30,7 @@ class WorkspacesState {
   final List<WorkspaceEntry> entries;
   final int currentIndex;
 
-  const WorkspacesState({
-    this.entries = const [],
-    this.currentIndex = 0,
-  });
+  const WorkspacesState({this.entries = const [], this.currentIndex = 0});
 
   List<String> get paths => entries.map((e) => e.path).toList();
 
@@ -51,10 +48,7 @@ class WorkspacesState {
     return entries[currentIndex];
   }
 
-  WorkspacesState copyWith({
-    List<WorkspaceEntry>? entries,
-    int? currentIndex,
-  }) {
+  WorkspacesState copyWith({List<WorkspaceEntry>? entries, int? currentIndex}) {
     return WorkspacesState(
       entries: entries ?? this.entries,
       currentIndex: currentIndex ?? this.currentIndex,
@@ -114,11 +108,15 @@ class WorkspacesNotifier extends Notifier<WorkspacesState> {
             entry.bookmark!,
             isDirectory: true,
           );
-          final started = await _secureBookmarks.startAccessingSecurityScopedResource(entity);
+          final started = await _secureBookmarks
+              .startAccessingSecurityScopedResource(entity);
           try {
             if (started && await entity.exists()) valid.add(entry);
           } finally {
-            if (started) await _secureBookmarks.stopAccessingSecurityScopedResource(entity);
+            if (started)
+              await _secureBookmarks.stopAccessingSecurityScopedResource(
+                entity,
+              );
           }
         } catch (_) {}
       } else {
@@ -130,8 +128,9 @@ class WorkspacesNotifier extends Notifier<WorkspacesState> {
 
     int idx = prefs.getInt(_keyCurrentIndex) ?? 0;
     if (idx >= entries.length) idx = 0;
-    final currentPath =
-        entries.isNotEmpty && idx < entries.length ? entries[idx].path : null;
+    final currentPath = entries.isNotEmpty && idx < entries.length
+        ? entries[idx].path
+        : null;
     int newIdx = 0;
     if (currentPath != null) {
       final i = valid.indexWhere((e) => e.path == currentPath);
@@ -154,21 +153,40 @@ class WorkspacesNotifier extends Notifier<WorkspacesState> {
 
   Future<void> addWorkspace(String path) async {
     final normalized = path.trim().replaceAll(RegExp(r'/+$'), '');
-    if (state.entries.any((e) => e.path == normalized)) {
-      final idx = state.entries.indexWhere((e) => e.path == normalized);
-      state = state.copyWith(currentIndex: idx);
-      await _save();
-      return;
-    }
 
     String? bookmark;
     if (Platform.isMacOS) {
       try {
-        bookmark = await _secureBookmarks.bookmark(Directory(normalized));
-      } catch (_) {}
+        // Используем путь как из пикера (только trim), без обрезки слэша — иначе bookmark может не создаться
+        final pathForBookmark = path.trim();
+        bookmark = await _secureBookmarks.bookmark(Directory(pathForBookmark));
+      } catch (e) {
+        assert(() {
+          print('WorkspacesProvider: не удалось создать bookmark: $e');
+          return true;
+        }());
+      }
     }
 
-    final newEntries = [...state.entries, WorkspaceEntry(path: normalized, bookmark: bookmark)];
+    if (state.entries.any((e) => e.path == normalized)) {
+      final idx = state.entries.indexWhere((e) => e.path == normalized);
+      // Если папка уже есть, но пользователь выбрал её снова — обновляем bookmark
+      final currentEntries = state.entries.toList();
+      if (bookmark != null) {
+        currentEntries[idx] = WorkspaceEntry(
+          path: normalized,
+          bookmark: bookmark,
+        );
+      }
+      state = state.copyWith(entries: currentEntries, currentIndex: idx);
+      await _save();
+      return;
+    }
+
+    final newEntries = [
+      ...state.entries,
+      WorkspaceEntry(path: normalized, bookmark: bookmark),
+    ];
     state = state.copyWith(
       entries: newEntries,
       currentIndex: newEntries.length - 1,
@@ -183,7 +201,9 @@ class WorkspacesNotifier extends Notifier<WorkspacesState> {
     if (index < state.currentIndex) {
       newIdx = state.currentIndex - 1;
     } else if (index == state.currentIndex) {
-      newIdx = newEntries.isEmpty ? 0 : (state.currentIndex.clamp(0, newEntries.length - 1));
+      newIdx = newEntries.isEmpty
+          ? 0
+          : (state.currentIndex.clamp(0, newEntries.length - 1));
     }
     state = state.copyWith(
       entries: newEntries,
@@ -209,7 +229,9 @@ class WorkspacesNotifier extends Notifier<WorkspacesState> {
 }
 
 final workspacesProvider =
-    NotifierProvider<WorkspacesNotifier, WorkspacesState>(() => WorkspacesNotifier());
+    NotifierProvider<WorkspacesNotifier, WorkspacesState>(
+      () => WorkspacesNotifier(),
+    );
 
 /// Триггер обновления файлов текущей папки (кнопка «Обновить»).
 class RefreshWorkspaceNotifier extends Notifier<int> {
@@ -222,4 +244,6 @@ class RefreshWorkspaceNotifier extends Notifier<int> {
 }
 
 final refreshWorkspaceProvider =
-    NotifierProvider<RefreshWorkspaceNotifier, int>(() => RefreshWorkspaceNotifier());
+    NotifierProvider<RefreshWorkspaceNotifier, int>(
+      () => RefreshWorkspaceNotifier(),
+    );

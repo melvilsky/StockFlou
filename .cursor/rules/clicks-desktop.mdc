@@ -1,0 +1,47 @@
+---
+description: Использовать SingleClickArea для кликов на desktop/macOS, чтобы не ломать одиночный клик
+globs: "**/*.dart"
+alwaysApply: true
+---
+
+# Клики на desktop (macOS/Windows)
+
+## Проблема
+
+На macOS (и иногда на Windows) виджеты `InkWell`, `GestureDetector` с `onTap` участвуют в gesture arena: **одиночный клик часто не срабатывает**, срабатывает только двойной. Это поведение Flutter на десктопе.
+
+## Решение
+
+Для **всех областей, где нужна реакция на один клик** (карточки в сетке, элементы списка, кастомные кнопки-зоны), использовать виджет **`SingleClickArea`** из `lib/core/widgets/single_click_area.dart`.
+
+- Он обрабатывает события указателя (pointer down/up) через `Listener`, а не жесты, поэтому один клик срабатывает сразу.
+- Не заменять его на голый `InkWell`/`GestureDetector` для таких зон — иначе снова начнёт срабатывать только двойной клик.
+
+## Как использовать
+
+```dart
+import '../../../core/widgets/single_click_area.dart'; // или путь от lib/
+
+// Вместо только InkWell(onTap: onTap, child: ...)
+SingleClickArea(
+  onTap: onTap,
+  child: Material(
+    color: Colors.transparent,
+    child: InkWell(
+      onTap: () {}, // только визуальный отклик; обработчик у SingleClickArea
+      child: ...,
+    ),
+  ),
+)
+```
+
+- Обработчик клика вешать на **`SingleClickArea`** (`onTap`).
+- У вложенного `InkWell` оставлять `onTap: () {}`, чтобы сохранить рипл, но не дублировать вызов.
+
+## Где применять
+
+- Карточки в сетках (файлы, превью).
+- Элементы списков, по которым тапают для выбора.
+- Любые кастомные зоны с `onTap`, где важен одиночный клик на desktop.
+
+Кнопки (`ElevatedButton`, `IconButton`, `TextButton`) можно не оборачивать — они уже ведут себя приемлемо. Правило касается в первую очередь кастомных тап-областей (например, `InkWell` вокруг контента).
