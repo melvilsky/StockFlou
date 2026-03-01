@@ -1203,11 +1203,9 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                               ),
                             ),
                             const SizedBox(width: 12),
-                            const Expanded(
-                              child: Text(
-                                'Применить ко всем оставшимся файлам',
-                                style: TextStyle(fontSize: 13),
-                              ),
+                            const Text(
+                              'Применить ко всем оставшимся файлам',
+                              style: TextStyle(fontSize: 13),
                             ),
                           ],
                         ),
