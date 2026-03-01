@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:collection/collection.dart';
 import 'package:desktop_drop/desktop_drop.dart';
@@ -26,6 +27,27 @@ import 'widgets/generation_filter_bar.dart';
 import 'widgets/generation_top_bar.dart';
 import 'widgets/generation_tools_bar.dart';
 import 'widgets/generation_widgets.dart';
+
+/// Mutex to ensure sequential dialog prompts from parallel queue tasks
+class _AsyncMutex {
+  Future<void>? _lock;
+
+  Future<T> synchronized<T>(Future<T> Function() action) async {
+    final completer = Completer<void>();
+    final previousLock = _lock;
+    _lock = completer.future;
+
+    if (previousLock != null) {
+      await previousLock;
+    }
+
+    try {
+      return await action();
+    } finally {
+      completer.complete();
+    }
+  }
+}
 
 class GenerationScreen extends ConsumerStatefulWidget {
   const GenerationScreen({super.key});
@@ -654,6 +676,10 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       _batchDone = 0;
     });
 
+    final dialogMutex = _AsyncMutex();
+    bool?
+    replaceAllDecision; // null = ask, true = replace all, false = skip all
+
     // Adaptive concurrency: Use up to 3 parallel requests for now
     final pool = Pool(3);
     final List<Future> tasks = [];
@@ -665,6 +691,59 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
             final path = fileObj is AppFile
                 ? fileObj.path
                 : (fileObj as File).path;
+
+            // Check if file already has tags
+            final isAppFileWithTags =
+                fileObj is AppFile &&
+                (fileObj.metadataTitle?.isNotEmpty ?? false) &&
+                (fileObj.metadataKeywords?.isNotEmpty ?? false);
+
+            bool shouldGenerate = true;
+
+            if (isAppFileWithTags) {
+              if (replaceAllDecision == true) {
+                shouldGenerate = true;
+              } else if (replaceAllDecision == false) {
+                shouldGenerate = false;
+              } else {
+                // Ask user sequentially using Mutex
+                final filename = path.split(Platform.pathSeparator).last;
+                final result = await dialogMutex.synchronized(() async {
+                  // Double check if another worker just clicked 'Apply to all' while we were waiting
+                  if (replaceAllDecision != null) return null;
+                  return await _showRegenerateDialog(filename);
+                });
+
+                if (result == null) {
+                  if (replaceAllDecision != null) {
+                    if (replaceAllDecision == true) {
+                      shouldGenerate = true;
+                    } else if (replaceAllDecision == false) {
+                      shouldGenerate = false;
+                    }
+                  } else {
+                    shouldGenerate =
+                        false; // default to skip if dialog was aborted
+                  }
+                } else {
+                  if (result.applyToAll) {
+                    replaceAllDecision = result.replace;
+                  }
+                  shouldGenerate = result.replace;
+                }
+              }
+            }
+
+            if (!shouldGenerate) {
+              if (mounted) {
+                setState(() {
+                  _batchDone++;
+                  _selectedPaths.remove(path);
+                });
+              }
+              return; // Skip this file
+            }
+
             final options = GenerationOptions(
               numberOfKeywords: _numKeywords.toInt(),
               shortTitle: false,
@@ -1074,6 +1153,60 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       city: _editorialCityController.text.trim(),
       country: _editorialCountryController.text.trim(),
       date: _editorialDate,
+    );
+  }
+
+  Future<({bool replace, bool applyToAll})?> _showRegenerateDialog(
+    String filename,
+  ) async {
+    bool applyToAll = false;
+    return showDialog<({bool replace, bool applyToAll})>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Перегенерировать теги?'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Файл "$filename" уже содержит метаданные. Заменить их?',
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: applyToAll,
+                        onChanged: (val) {
+                          setState(() => applyToAll = val ?? false);
+                        },
+                      ),
+                      const Text('Применить ко всем оставшимся файлам'),
+                    ],
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(
+                    context,
+                  ).pop((replace: false, applyToAll: applyToAll)),
+                  child: const Text('Пропустить'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(
+                    context,
+                  ).pop((replace: true, applyToAll: applyToAll)),
+                  child: const Text('Заменить'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
