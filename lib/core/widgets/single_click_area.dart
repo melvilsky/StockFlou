@@ -1,4 +1,3 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 /// Область, реагирующая на один клик через [Listener].
@@ -7,11 +6,7 @@ class SingleClickArea extends StatefulWidget {
   final VoidCallback? onTap;
   final Widget child;
 
-  const SingleClickArea({
-    super.key,
-    required this.child,
-    this.onTap,
-  });
+  const SingleClickArea({super.key, required this.child, this.onTap});
 
   @override
   State<SingleClickArea> createState() => _SingleClickAreaState();
@@ -35,7 +30,9 @@ class _SingleClickAreaState extends State<SingleClickArea> {
   }
 
   void _onPointerUp(PointerUpEvent event) {
-    if (_downPosition == null || _downPointer != event.pointer || widget.onTap == null) {
+    if (_downPosition == null ||
+        _downPointer != event.pointer ||
+        widget.onTap == null) {
       setState(() {
         _downPosition = null;
         _downPointer = null;

@@ -47,7 +47,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
   bool _isDragging = false;
 
   // Options
-  double _numKeywords = 15;
+  final double _numKeywords = 15;
   final _titleController = TextEditingController();
   final _keywordsController = TextEditingController();
 
@@ -892,10 +892,11 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       );
       if (ok) saved++;
     }
-    if (mounted)
+    if (mounted) {
       _showSuccess(
         'Сохранить все: записано $saved из ${toSave.length} файлов.',
       );
+    }
   }
 
   void _showSuccess(String message) {
@@ -2058,7 +2059,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                               _FormLabel('CATEGORIES'),
                               const SizedBox(height: 6),
                               DropdownButtonFormField<String>(
-                                value: 'Urban & Architecture',
+                                initialValue: 'Urban & Architecture',
                                 decoration: _inputDecoration(context),
                                 items: const [
                                   DropdownMenuItem(
@@ -2246,8 +2247,9 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                         exif.lon,
                       );
                       setState(() {
-                        if (geo.city != null)
+                        if (geo.city != null) {
                           _editorialCityController.text = geo.city!;
+                        }
                         if (geo.country != null || geo.state != null) {
                           _editorialCountryController.text =
                               geo.state ?? geo.country ?? '';
@@ -2658,7 +2660,6 @@ class _SideActionIcon extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onTap,
-    this.isActive = true,
   });
 
   @override

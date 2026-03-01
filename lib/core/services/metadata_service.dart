@@ -72,8 +72,9 @@ class MetadataService {
       }
 
       final List<dynamic> json = jsonDecode(result.stdout as String);
-      if (json.isEmpty)
+      if (json.isEmpty) {
         return (lat: null, lon: null, date: null, hasAudio: false);
+      }
       final data = json[0] as Map<String, dynamic>;
 
       // Audio
