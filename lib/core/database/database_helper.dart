@@ -25,7 +25,7 @@ class DatabaseHelper {
     return await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 3,
+        version: 4,
         onCreate: _createDB,
         onUpgrade: _upgradeDB,
       ),
@@ -48,6 +48,9 @@ CREATE TABLE files (
   created_at INTEGER NOT NULL
 )
 ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)',
+    );
   }
 
   Future _upgradeDB(Database db, int oldVersion, int newVersion) async {
@@ -60,6 +63,11 @@ CREATE TABLE files (
       await db.execute('ALTER TABLE files ADD COLUMN editorial_city TEXT');
       await db.execute('ALTER TABLE files ADD COLUMN editorial_country TEXT');
       await db.execute('ALTER TABLE files ADD COLUMN editorial_date INTEGER');
+    }
+    if (oldVersion < 4) {
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)',
+      );
     }
   }
 

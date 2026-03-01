@@ -98,6 +98,8 @@ class WorkspacesNotifier extends Notifier<WorkspacesState> {
             entries = paths.map((p) => WorkspaceEntry(path: p)).toList();
           }
         } catch (_) {}
+        // Remove the legacy key after migrating to avoid keeping stale data
+        await prefs.remove(_keyPaths);
       }
     }
 

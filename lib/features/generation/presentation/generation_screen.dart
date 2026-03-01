@@ -691,11 +691,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
               batchExif = await MetadataService.readExifLocationAndDate(path);
               String localCity = '';
               String localCountry = '';
-              String localDate = '';
 
-              if (batchExif.date != null) {
-                localDate = _formatEditorialDate(batchExif.date!);
-              }
               if (batchExif.lat != null && batchExif.lon != null) {
                 final geo = await GeocodingService.resolve(
                   batchExif.lat,
@@ -708,20 +704,11 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
               batchCity = localCity;
               batchCountry = localCountry;
 
-              final locationParts = <String>[];
-              if (localCity.isNotEmpty) locationParts.add(localCity);
-              if (localCountry.isNotEmpty) locationParts.add(localCountry);
-              final location = locationParts.join(', ');
-
-              String prefix = '';
-              if (location.isNotEmpty && localDate.isNotEmpty) {
-                prefix = '$location - $localDate';
-              } else if (location.isNotEmpty) {
-                prefix = location;
-              } else if (localDate.isNotEmpty) {
-                prefix = localDate;
-              }
-
+              final prefix = _buildEditorialPrefix(
+                city: localCity,
+                country: localCountry,
+                date: batchExif.date,
+              );
               if (prefix.isNotEmpty) {
                 finalTitle = '$prefix: $fetchedTitle';
               }
@@ -729,19 +716,27 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
 
             // Save/Update DB
             final existing = fileObj is AppFile ? fileObj : null;
-            final newFile = AppFile(
-              id: existing?.id ?? const Uuid().v4(),
-              path: path,
-              filename: path.split(Platform.pathSeparator).last,
-              metadataTitle: finalTitle,
-              metadataKeywords: keywordsString,
-              isEditorial: _isEditorial,
-              editorialCity: batchCity,
-              editorialCountry: batchCountry,
-              editorialDate: batchExif?.date?.millisecondsSinceEpoch,
-              createdAt:
-                  existing?.createdAt ?? DateTime.now().millisecondsSinceEpoch,
-            );
+            final newFile = existing != null
+                ? existing.copyWith(
+                    metadataTitle: finalTitle,
+                    metadataKeywords: keywordsString,
+                    isEditorial: _isEditorial,
+                    editorialCity: batchCity,
+                    editorialCountry: batchCountry,
+                    editorialDate: batchExif?.date?.millisecondsSinceEpoch,
+                  )
+                : AppFile(
+                    id: const Uuid().v4(),
+                    path: path,
+                    filename: path.split(Platform.pathSeparator).last,
+                    metadataTitle: finalTitle,
+                    metadataKeywords: keywordsString,
+                    isEditorial: _isEditorial,
+                    editorialCity: batchCity,
+                    editorialCountry: batchCountry,
+                    editorialDate: batchExif?.date?.millisecondsSinceEpoch,
+                    createdAt: DateTime.now().millisecondsSinceEpoch,
+                  );
 
             await ref.read(filesProvider.notifier).addFile(newFile);
 
@@ -784,22 +779,15 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
     final keywords = _keywordsController.text.trim();
 
     if (_selectedExistingFile != null) {
-      final updatedFile = AppFile(
-        id: _selectedExistingFile!.id,
-        path: _selectedExistingFile!.path,
-        filename: _selectedExistingFile!.filename,
+      final updatedFile = _selectedExistingFile!.copyWith(
         metadataTitle: title,
         metadataKeywords: keywords,
         isEditorial: _isEditorial,
         editorialCity: _editorialCityController.text,
         editorialCountry: _editorialCountryController.text,
         editorialDate: _editorialDate?.millisecondsSinceEpoch,
-        createdAt: _selectedExistingFile!.createdAt,
       );
       await ref.read(filesProvider.notifier).updateFile(updatedFile);
-      setState(() {
-        _selectedExistingFile = updatedFile;
-      });
 
       // Also write to original file if it's an image
       if (!AppConstants.isVideo(updatedFile.path)) {
@@ -810,8 +798,13 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         );
       }
 
-      setState(() => _metadataDirty = false);
-      _showSuccess('Изменения сохранены в БД и в файл.');
+      if (mounted) {
+        setState(() {
+          _selectedExistingFile = updatedFile;
+          _metadataDirty = false;
+        });
+        _showSuccess('Изменения сохранены в БД и в файл.');
+      }
     } else if (_selectedLocalInspectorFile != null) {
       final newFile = AppFile(
         id: const Uuid().v4(),
@@ -828,13 +821,6 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         createdAt: DateTime.now().millisecondsSinceEpoch,
       );
       await ref.read(filesProvider.notifier).addFile(newFile);
-      setState(() {
-        _selectedExistingFile = newFile;
-        _localFiles.removeWhere(
-          (f) => f.path == _selectedLocalInspectorFile!.path,
-        );
-        _selectedLocalInspectorFile = null;
-      });
 
       // Also write to original file if it's an image
       if (!AppConstants.isVideo(newFile.path)) {
@@ -845,8 +831,17 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         );
       }
 
-      setState(() => _metadataDirty = false);
-      _showSuccess('Файл добавлен в БД и метаданные записаны в файл.');
+      if (mounted) {
+        setState(() {
+          _selectedExistingFile = newFile;
+          _localFiles.removeWhere(
+            (f) => f.path == _selectedLocalInspectorFile!.path,
+          );
+          _selectedLocalInspectorFile = null;
+          _metadataDirty = false;
+        });
+        _showSuccess('Файл добавлен в БД и метаданные записаны в файл.');
+      }
     }
   }
 
@@ -1050,14 +1045,14 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
     return '${_months[date.month - 1]} ${date.day} ${date.year}';
   }
 
-  /// Формирует editorial prefix: "CITY, COUNTRY - MONTH DAY YEAR"
-  String _formatEditorialPrefix() {
-    final city = _editorialCityController.text.trim();
-    final country = _editorialCountryController.text.trim();
-    final datePart = _editorialDate != null
-        ? _formatEditorialDate(_editorialDate!)
-        : '';
-
+  /// Builds an editorial prefix: "CITY, COUNTRY - MONTH DAY YEAR"
+  /// Can be called with explicit values (batch) or from form controllers.
+  String _buildEditorialPrefix({
+    required String city,
+    required String country,
+    required DateTime? date,
+  }) {
+    final datePart = date != null ? _formatEditorialDate(date) : '';
     final locationParts = <String>[];
     if (city.isNotEmpty) locationParts.add(city);
     if (country.isNotEmpty) locationParts.add(country);
@@ -1071,6 +1066,15 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       return datePart;
     }
     return '';
+  }
+
+  /// Формирует editorial prefix из текущих контроллеров формы.
+  String _formatEditorialPrefix() {
+    return _buildEditorialPrefix(
+      city: _editorialCityController.text.trim(),
+      country: _editorialCountryController.text.trim(),
+      date: _editorialDate,
+    );
   }
 
   void _showError(String message) {

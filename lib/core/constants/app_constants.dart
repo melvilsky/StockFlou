@@ -1,3 +1,5 @@
+import 'package:path/path.dart' as p;
+
 enum NavigationTab { workspace, recent, uploads, analytics, settings }
 
 class AppConstants {
@@ -11,12 +13,12 @@ class AppConstants {
   ];
 
   static bool isVideo(String path) {
-    final ext = path.split('.').last.toLowerCase();
-    return videoExtensions.contains('.$ext');
+    final ext = p.extension(path).toLowerCase();
+    return videoExtensions.contains(ext);
   }
 
   static bool isImage(String path) {
-    final ext = path.split('.').last.toLowerCase();
-    return imageExtensions.contains('.$ext');
+    final ext = p.extension(path).toLowerCase();
+    return imageExtensions.contains(ext);
   }
 }

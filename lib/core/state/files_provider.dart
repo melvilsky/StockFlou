@@ -10,13 +10,16 @@ class FilesNotifier extends AsyncNotifier<List<AppFile>> {
 
   Future<void> addFile(AppFile file) async {
     final previous = state.value ?? [];
+    // Optimistic update
     state = AsyncData([file, ...previous]);
     try {
       await DatabaseHelper.instance.insertFile(file);
       final refreshed = await DatabaseHelper.instance.getAllFiles();
       state = AsyncData(refreshed);
-    } catch (e, st) {
-      state = AsyncError(e, st);
+    } catch (e) {
+      // Rollback to previous data instead of showing error state in UI
+      state = AsyncData(previous);
+      rethrow;
     }
   }
 
@@ -25,8 +28,9 @@ class FilesNotifier extends AsyncNotifier<List<AppFile>> {
     state = AsyncData(previous.where((f) => f.id != id).toList());
     try {
       await DatabaseHelper.instance.deleteFile(id);
-    } catch (e, st) {
-      state = AsyncError(e, st);
+    } catch (e) {
+      state = AsyncData(previous);
+      rethrow;
     }
   }
 
@@ -38,8 +42,9 @@ class FilesNotifier extends AsyncNotifier<List<AppFile>> {
     ]);
     try {
       await DatabaseHelper.instance.updateFile(file);
-    } catch (e, st) {
-      state = AsyncError(e, st);
+    } catch (e) {
+      state = AsyncData(previous);
+      rethrow;
     }
   }
 }

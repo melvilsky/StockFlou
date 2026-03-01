@@ -3,8 +3,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 class MetadataService {
-  static bool _exifDisabledDueToPermissions = false;
-
   /// Writes IPTC/XMP metadata to a file using exiftool.
   /// This assumes exiftool is available in the system PATH.
   static Future<bool> writeMetadata({
@@ -14,12 +12,15 @@ class MetadataService {
     String? description,
   }) async {
     try {
-      // IPTC and XMP tags for Title, Description, and Keywords
-      // -Title: IPTC:ObjectName, XMP-dc:Title
-      // -Description: IPTC:Caption-Abstract, XMP-dc:Description
-      // -Keywords: IPTC:Keywords, XMP-dc:Subject
+      // Split comma-separated keywords into individual -Keywords flags so
+      // IPTC stores them as separate entries (not one long comma-joined string).
+      final keywordList = keywords
+          .split(',')
+          .map((k) => k.trim())
+          .where((k) => k.isNotEmpty)
+          .toList();
 
-      final result = await Process.run('exiftool', [
+      final args = <String>[
         '-overwrite_original',
         '-ObjectName=$title',
         '-Title=$title',
@@ -27,10 +28,15 @@ class MetadataService {
           '-Caption-Abstract=$description',
         if (description != null && description.isNotEmpty)
           '-Description=$description',
-        '-Keywords=$keywords',
-        '-Subject=$keywords',
+        // Clear existing keywords first, then write all new ones individually
+        '-Keywords=',
+        '-Subject=',
+        for (final kw in keywordList) '-Keywords=$kw',
+        for (final kw in keywordList) '-Subject=$kw',
         filePath,
-      ]);
+      ];
+
+      final result = await Process.run('exiftool', args);
 
       if (result.exitCode == 0) {
         debugPrint('Successfully wrote metadata to $filePath');
@@ -49,9 +55,6 @@ class MetadataService {
   /// Works for both photos (JPEG, PNG) and videos (MOV, MP4).
   static Future<({double? lat, double? lon, DateTime? date, bool hasAudio})>
   readExifLocationAndDate(String filePath) async {
-    if (_exifDisabledDueToPermissions) {
-      return (lat: null, lon: null, date: null, hasAudio: false);
-    }
     try {
       final result = await Process.run('exiftool', [
         '-json',
@@ -113,10 +116,6 @@ class MetadataService {
 
       return (lat: lat, lon: lon, date: date, hasAudio: hasAudio);
     } catch (e) {
-      if (e is ProcessException &&
-          (e.message.contains('Operation not permitted') || e.errorCode == 1)) {
-        _exifDisabledDueToPermissions = true;
-      }
       debugPrint('Error reading EXIF: $e');
       return (lat: null, lon: null, date: null, hasAudio: false);
     }
