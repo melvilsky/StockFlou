@@ -15,6 +15,7 @@ import '../../../core/services/metadata_service.dart';
 import '../../../core/services/geocoding_service.dart';
 import '../../../core/state/files_provider.dart';
 import '../../../core/state/settings_provider.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../core/widgets/single_click_area.dart';
 import 'video_player_widget.dart';
 import '../../../core/state/workspaces_provider.dart';
@@ -72,11 +73,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
   /// 'all' | 'images' | 'videos'
   String _filterType = 'all';
 
-  static const _videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.m4v'];
-  bool _isVideoPath(String path) {
-    final ext = path.split('.').last.toLowerCase();
-    return _videoExtensions.contains('.$ext');
-  }
+  bool _isVideoPath(String path) => AppConstants.isVideo(path);
 
   /// Применяет текущие фильтры к спискам файлов и возвращает отфильтрованные списки.
   ({List<File> locals, List<AppFile> db}) _applyFilters(
@@ -142,11 +139,6 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
 
   static final _secureBookmarks = SecureBookmarks();
 
-  bool _isVideo(String path) {
-    final ext = path.split('.').last.toLowerCase();
-    return ['.mp4', '.mov', '.avi', '.mkv', '.m4v'].contains('.$ext');
-  }
-
   /// Загружает файлы текущей рабочей области из папки (без блокировки UI).
   /// На macOS при наличии security-scoped bookmark держит доступ открытым до смены папки/dispose,
   /// чтобы миниатюры (Image.file) и чтение файлов работали.
@@ -182,9 +174,10 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         // Без bookmark: используем путь напрямую (сработает при Full Disk Access)
         dir = Directory(currentPath);
       }
-      final imageExtensions = ['.jpg', '.jpeg', '.png'];
-      final videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.m4v'];
-      final allExtensions = [...imageExtensions, ...videoExtensions];
+      final allExtensions = [
+        ...AppConstants.imageExtensions,
+        ...AppConstants.videoExtensions,
+      ];
       final dbFiles = ref.read(filesProvider).value ?? [];
       final sep = Platform.pathSeparator;
       final prefix = currentPath.endsWith(sep)
@@ -370,7 +363,6 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       return;
     }
 
-    await ref.read(settingsProvider.notifier).setWorkspacePath(directoryPath);
     await ref.read(workspacesProvider.notifier).addWorkspace(directoryPath);
 
     final dir = Directory(directoryPath);
@@ -379,9 +371,10 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       return;
     }
 
-    final imageExtensions = ['.jpg', '.jpeg', '.png'];
-    final videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.m4v'];
-    final allExtensions = [...imageExtensions, ...videoExtensions];
+    final allExtensions = [
+      ...AppConstants.imageExtensions,
+      ...AppConstants.videoExtensions,
+    ];
 
     final dbFiles = ref.read(filesProvider).value ?? [];
     int addedCount = 0;
@@ -804,7 +797,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       });
 
       // Also write to original file if it's an image
-      if (!_isVideo(updatedFile.path)) {
+      if (!AppConstants.isVideo(updatedFile.path)) {
         await MetadataService.writeMetadata(
           filePath: updatedFile.path,
           title: title,
@@ -839,7 +832,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       });
 
       // Also write to original file if it's an image
-      if (!_isVideo(newFile.path)) {
+      if (!AppConstants.isVideo(newFile.path)) {
         await MetadataService.writeMetadata(
           filePath: newFile.path,
           title: title,
@@ -880,7 +873,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
     }
     int saved = 0;
     for (final f in toSave) {
-      if (_isVideo(f.path)) {
+      if (AppConstants.isVideo(f.path)) {
         // Just count as saved for the DB, since we don't write Exif to video files.
         saved++;
         continue;
@@ -913,7 +906,6 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
   }
 
   Widget _buildMultiSelectPanel(ColorScheme colorScheme) {
-    final dbFiles = ref.read(filesProvider).value ?? [];
     final paths = _selectedPaths.toList();
     return ListView(
       padding: const EdgeInsets.all(12),
@@ -2037,7 +2029,6 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                                 ],
                               ),
                               const SizedBox(height: 6),
-                              const SizedBox(height: 6),
                               TextField(
                                 controller: _keywordsController,
                                 maxLines: 4,
@@ -2054,38 +2045,6 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                                   padding: EdgeInsets.only(top: 8),
                                   child: LinearProgressIndicator(),
                                 ),
-
-                              const SizedBox(height: 16),
-                              _FormLabel('CATEGORIES'),
-                              const SizedBox(height: 6),
-                              DropdownButtonFormField<String>(
-                                initialValue: 'Urban & Architecture',
-                                decoration: _inputDecoration(context),
-                                items: const [
-                                  DropdownMenuItem(
-                                    value: 'Urban & Architecture',
-                                    child: Text(
-                                      'Urban & Architecture',
-                                      style: TextStyle(fontSize: 14),
-                                    ),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 'Nature',
-                                    child: Text(
-                                      'Nature',
-                                      style: TextStyle(fontSize: 14),
-                                    ),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 'People',
-                                    child: Text(
-                                      'People',
-                                      style: TextStyle(fontSize: 14),
-                                    ),
-                                  ),
-                                ],
-                                onChanged: (v) {},
-                              ),
 
                               const SizedBox(height: 24),
                               const Divider(),
@@ -2540,16 +2499,7 @@ class _GridCard extends StatelessWidget {
                 Expanded(
                   child: Builder(
                     builder: (context) {
-                      final videoExtensions = [
-                        '.mp4',
-                        '.mov',
-                        '.avi',
-                        '.mkv',
-                        '.m4v',
-                      ];
-                      final isVideo = videoExtensions.any(
-                        (ext) => imagePath.toLowerCase().endsWith(ext),
-                      );
+                      final isVideo = AppConstants.isVideo(imagePath);
 
                       return Container(
                         decoration: BoxDecoration(
@@ -2643,50 +2593,6 @@ class _GridCard extends StatelessWidget {
                 ),
               ],
             ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SideActionIcon extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final bool isActive;
-
-  const _SideActionIcon({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Opacity(
-      opacity: isActive ? 1.0 : 0.4,
-      child: Tooltip(
-        message: label,
-        child: InkWell(
-          onTap: isActive ? onTap : null,
-          borderRadius: BorderRadius.circular(8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 24, color: colorScheme.primary),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.onSurface,
-                ),
-              ),
-            ],
           ),
         ),
       ),

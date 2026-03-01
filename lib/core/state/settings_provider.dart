@@ -3,23 +3,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class SettingsState {
   final String? apiKey;
-  final String? workspacePath;
   final List<String> savedLocations;
 
-  SettingsState({
-    this.apiKey,
-    this.workspacePath,
-    this.savedLocations = const [],
-  });
+  SettingsState({this.apiKey, this.savedLocations = const []});
 
-  SettingsState copyWith({
-    String? apiKey,
-    String? workspacePath,
-    List<String>? savedLocations,
-  }) {
+  SettingsState copyWith({String? apiKey, List<String>? savedLocations}) {
     return SettingsState(
       apiKey: apiKey ?? this.apiKey,
-      workspacePath: workspacePath ?? this.workspacePath,
       savedLocations: savedLocations ?? this.savedLocations,
     );
   }
@@ -32,25 +22,14 @@ class SettingsNotifier extends AsyncNotifier<SettingsState> {
   Future<SettingsState> build() async {
     final prefs = await SharedPreferences.getInstance();
     final apiKey = prefs.getString('api_key');
-    final workspacePath = prefs.getString('workspace_path');
     final savedLocations = prefs.getStringList(_keyLocations) ?? [];
-    return SettingsState(
-      apiKey: apiKey,
-      workspacePath: workspacePath,
-      savedLocations: savedLocations,
-    );
+    return SettingsState(apiKey: apiKey, savedLocations: savedLocations);
   }
 
   Future<void> setApiKey(String key) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('api_key', key);
     state = AsyncValue.data(state.value!.copyWith(apiKey: key));
-  }
-
-  Future<void> setWorkspacePath(String path) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('workspace_path', path);
-    state = AsyncValue.data(state.value!.copyWith(workspacePath: path));
   }
 
   Future<void> addLocation(String city, String country) async {

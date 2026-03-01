@@ -11,6 +11,7 @@ import 'features/generation/presentation/generation_screen.dart';
 import 'features/history/presentation/history_screen.dart';
 import 'features/settings/settings_screen.dart';
 import 'core/widgets/single_click_area.dart';
+import 'core/constants/app_constants.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -64,10 +65,10 @@ class _MainShellState extends ConsumerState<MainShell> {
     final colorScheme = Theme.of(context).colorScheme;
     final currentIndex = ref.watch(navigationProvider);
     ref.listen(initialNavigationIndexProvider, (prev, next) {
-      next.whenData((idx) {
+      next.whenData((tab) {
         if (!_navigationRestored) {
           _navigationRestored = true;
-          ref.read(navigationProvider.notifier).setIndex(idx);
+          ref.read(navigationProvider.notifier).setTab(tab);
         }
       });
     });
@@ -125,7 +126,7 @@ class _MainShellState extends ConsumerState<MainShell> {
                 ),
 
                 // Рабочие области — только в разделе «Рабочее пространство»
-                if (currentIndex == 0)
+                if (currentIndex == NavigationTab.workspace)
                   _buildWorkspacesBlock(context, colorScheme, ref),
 
                 const Spacer(),
@@ -146,41 +147,46 @@ class _MainShellState extends ConsumerState<MainShell> {
                       _SidebarIconItem(
                         icon: Icons.folder_outlined,
                         tooltip: 'Рабочее пространство',
-                        isSelected: currentIndex == 0,
-                        onTap: () =>
-                            ref.read(navigationProvider.notifier).setIndex(0),
+                        isSelected: currentIndex == NavigationTab.workspace,
+                        onTap: () => ref
+                            .read(navigationProvider.notifier)
+                            .setTab(NavigationTab.workspace),
                         compact: true,
                       ),
                       _SidebarIconItem(
                         icon: Icons.schedule_outlined,
                         tooltip: 'Recent',
-                        isSelected: currentIndex == 1,
-                        onTap: () =>
-                            ref.read(navigationProvider.notifier).setIndex(1),
+                        isSelected: currentIndex == NavigationTab.recent,
+                        onTap: () => ref
+                            .read(navigationProvider.notifier)
+                            .setTab(NavigationTab.recent),
                         compact: true,
                       ),
                       _SidebarIconItem(
                         icon: Icons.cloud_upload_outlined,
                         tooltip: 'Uploads',
-                        isSelected: currentIndex == 2,
-                        onTap: () =>
-                            ref.read(navigationProvider.notifier).setIndex(2),
+                        isSelected: currentIndex == NavigationTab.uploads,
+                        onTap: () => ref
+                            .read(navigationProvider.notifier)
+                            .setTab(NavigationTab.uploads),
                         compact: true,
                       ),
                       _SidebarIconItem(
                         icon: Icons.analytics_outlined,
                         tooltip: 'Analytics',
-                        isSelected: currentIndex == 3,
-                        onTap: () =>
-                            ref.read(navigationProvider.notifier).setIndex(3),
+                        isSelected: currentIndex == NavigationTab.analytics,
+                        onTap: () => ref
+                            .read(navigationProvider.notifier)
+                            .setTab(NavigationTab.analytics),
                         compact: true,
                       ),
                       _SidebarIconItem(
                         icon: Icons.settings_outlined,
                         tooltip: 'Настройки',
-                        isSelected: currentIndex == 4,
-                        onTap: () =>
-                            ref.read(navigationProvider.notifier).setIndex(4),
+                        isSelected: currentIndex == NavigationTab.settings,
+                        onTap: () => ref
+                            .read(navigationProvider.notifier)
+                            .setTab(NavigationTab.settings),
                         compact: true,
                       ),
                     ],
@@ -193,13 +199,13 @@ class _MainShellState extends ConsumerState<MainShell> {
           // Main Content
           Expanded(
             child: IndexedStack(
-              index: currentIndex,
+              index: currentIndex.index,
               children: const [
-                GenerationScreen(), // 0: Workspaces
-                HistoryScreen(), // 1: Recent / History
-                Center(child: Text('Uploads Context')), // 2: Uploads
-                Center(child: Text('Analytics Dashboard')), // 3: Analytics
-                SettingsScreen(), // 4: Settings
+                GenerationScreen(), // workspace
+                HistoryScreen(), // recent
+                Center(child: Text('Uploads Context')), // uploads
+                Center(child: Text('Analytics Dashboard')), // analytics
+                SettingsScreen(), // settings
               ],
             ),
           ),
@@ -274,7 +280,9 @@ class _MainShellState extends ConsumerState<MainShell> {
                               ref
                                   .read(workspacesProvider.notifier)
                                   .setCurrent(idx);
-                              ref.read(navigationProvider.notifier).setIndex(0);
+                              ref
+                                  .read(navigationProvider.notifier)
+                                  .setTab(NavigationTab.workspace);
                             },
                             child: InkWell(
                               onTap: () {}, // Handled by SingleClickArea
@@ -364,7 +372,9 @@ class _MainShellState extends ConsumerState<MainShell> {
                       .read(workspacesProvider.notifier)
                       .addWorkspace(path);
                   if (context.mounted) {
-                    ref.read(navigationProvider.notifier).setIndex(0);
+                    ref
+                        .read(navigationProvider.notifier)
+                        .setTab(NavigationTab.workspace);
                   }
                 }
               },
@@ -384,7 +394,9 @@ class _MainShellState extends ConsumerState<MainShell> {
                   ? null
                   : () {
                       ref.read(refreshWorkspaceProvider.notifier).trigger();
-                      ref.read(navigationProvider.notifier).setIndex(0);
+                      ref
+                          .read(navigationProvider.notifier)
+                          .setTab(NavigationTab.workspace);
                     },
               icon: const Icon(Icons.refresh, size: 16),
               label: const Text('Обновить'),
@@ -442,76 +454,6 @@ class _SidebarIconItem extends StatelessWidget {
                 color: isSelected
                     ? primary
                     : colorScheme.onSurface.withValues(alpha: 0.7),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SidebarItem extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool isSelected;
-  final VoidCallback onTap;
-
-  const _SidebarItem({
-    required this.icon,
-    required this.label,
-    required this.isSelected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final primary = colorScheme.primary;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    final selectedBg = primary.withValues(alpha: 0.1);
-    final selectedText = primary;
-
-    final unselectedHover = isDark
-        ? Colors.white10
-        : Colors.black.withValues(alpha: 0.05);
-    final unselectedText = isDark ? Colors.white70 : Colors.black54;
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: SingleClickArea(
-        onTap: onTap,
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: () {}, // Handled by SingleClickArea
-            borderRadius: BorderRadius.circular(8),
-            hoverColor: isSelected ? selectedBg : unselectedHover,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: isSelected ? selectedBg : Colors.transparent,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    icon,
-                    size: 20,
-                    color: isSelected ? selectedText : unselectedText,
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontWeight: isSelected
-                          ? FontWeight.w500
-                          : FontWeight.normal,
-                      color: isSelected ? selectedText : unselectedText,
-                    ),
-                  ),
-                ],
               ),
             ),
           ),

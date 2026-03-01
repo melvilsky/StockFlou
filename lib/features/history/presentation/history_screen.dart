@@ -61,13 +61,19 @@ class HistoryScreen extends StatelessWidget {
           Builder(
             builder: (context) {
               final isDark = Theme.of(context).brightness == Brightness.dark;
-              final destructiveColor = isDark ? AppTheme.errorColorDark : AppTheme.errorColor;
+              final destructiveColor = isDark
+                  ? AppTheme.errorColorDark
+                  : AppTheme.errorColor;
               return Container(
                 height: 36,
                 margin: const EdgeInsets.symmetric(vertical: 10),
                 child: TextButton.icon(
                   onPressed: () {},
-                  icon: Icon(Icons.cancel_outlined, size: 16, color: destructiveColor),
+                  icon: Icon(
+                    Icons.cancel_outlined,
+                    size: 16,
+                    color: destructiveColor,
+                  ),
                   label: Text(
                     'Cancel All',
                     style: TextStyle(
@@ -380,7 +386,7 @@ class HistoryScreen extends StatelessWidget {
         // subtle shadow
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.02),
+            color: Colors.black.withValues(alpha: 0.02),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -509,7 +515,7 @@ class HistoryScreen extends StatelessWidget {
                   height: 28,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: platformColor.withOpacity(0.15),
+                    color: platformColor.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
@@ -525,7 +531,7 @@ class HistoryScreen extends StatelessWidget {
                 Text(
                   platformName,
                   style: TextStyle(
-                    color: colorScheme.onSurface.withOpacity(0.8),
+                    color: colorScheme.onSurface.withValues(alpha: 0.8),
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
                   ),

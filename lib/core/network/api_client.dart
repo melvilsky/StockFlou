@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:fc_native_video_thumbnail/fc_native_video_thumbnail.dart';
 
 import '../../models/generation_options.dart';
+import '../constants/app_constants.dart';
 
 /// Выполняется в отдельном isolate, чтобы не блокировать UI.
 Uint8List? _resizeImageInIsolate(Uint8List bytes) {
@@ -27,11 +28,6 @@ class ApiClient {
 
   ApiClient() : _dio = Dio(BaseOptions(baseUrl: _baseUrl));
 
-  bool _isVideo(String path) {
-    final ext = p.extension(path).toLowerCase();
-    return ['.mp4', '.mov', '.avi', '.mkv', '.m4v'].contains(ext);
-  }
-
   Future<Map<String, dynamic>> generateMetadata({
     required String apiKey,
     required String filePath,
@@ -46,7 +42,7 @@ class ApiClient {
       await stockFlouTemp.create(recursive: true);
     }
 
-    if (_isVideo(filePath)) {
+    if (AppConstants.isVideo(filePath)) {
       // Это видео: извлекаем кадр из середины
       final tempThumbPath = p.join(
         stockFlouTemp.path,

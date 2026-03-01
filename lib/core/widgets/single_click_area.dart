@@ -22,31 +22,25 @@ class _SingleClickAreaState extends State<SingleClickArea> {
 
   void _onPointerDown(PointerDownEvent event) {
     if (event.buttons != 1) return; // только левая кнопка
-    setState(() {
-      _downPosition = event.position;
-      _downPointer = event.pointer;
-      _downTime = DateTime.now();
-    });
+    _downPosition = event.position;
+    _downPointer = event.pointer;
+    _downTime = DateTime.now();
   }
 
   void _onPointerUp(PointerUpEvent event) {
     if (_downPosition == null ||
         _downPointer != event.pointer ||
         widget.onTap == null) {
-      setState(() {
-        _downPosition = null;
-        _downPointer = null;
-        _downTime = null;
-      });
+      _downPosition = null;
+      _downPointer = null;
+      _downTime = null;
       return;
     }
     final duration = DateTime.now().difference(_downTime!).inMilliseconds;
     final distance = (event.position - _downPosition!).distance;
-    setState(() {
-      _downPosition = null;
-      _downPointer = null;
-      _downTime = null;
-    });
+    _downPosition = null;
+    _downPointer = null;
+    _downTime = null;
     if (duration <= _maxTapDurationMs && distance <= _maxTapSlop) {
       widget.onTap!();
     }
@@ -54,11 +48,9 @@ class _SingleClickAreaState extends State<SingleClickArea> {
 
   void _onPointerCancel(PointerCancelEvent event) {
     if (_downPointer == event.pointer) {
-      setState(() {
-        _downPosition = null;
-        _downPointer = null;
-        _downTime = null;
-      });
+      _downPosition = null;
+      _downPointer = null;
+      _downTime = null;
     }
   }
 

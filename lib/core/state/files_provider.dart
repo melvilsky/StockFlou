@@ -9,27 +9,38 @@ class FilesNotifier extends AsyncNotifier<List<AppFile>> {
   }
 
   Future<void> addFile(AppFile file) async {
-    state = const AsyncValue.loading();
-    state = await AsyncValue.guard(() async {
+    final previous = state.value ?? [];
+    state = AsyncData([file, ...previous]);
+    try {
       await DatabaseHelper.instance.insertFile(file);
-      return await DatabaseHelper.instance.getAllFiles();
-    });
+      final refreshed = await DatabaseHelper.instance.getAllFiles();
+      state = AsyncData(refreshed);
+    } catch (e, st) {
+      state = AsyncError(e, st);
+    }
   }
 
   Future<void> removeFile(String id) async {
-    state = const AsyncValue.loading();
-    state = await AsyncValue.guard(() async {
+    final previous = state.value ?? [];
+    state = AsyncData(previous.where((f) => f.id != id).toList());
+    try {
       await DatabaseHelper.instance.deleteFile(id);
-      return await DatabaseHelper.instance.getAllFiles();
-    });
+    } catch (e, st) {
+      state = AsyncError(e, st);
+    }
   }
 
   Future<void> updateFile(AppFile file) async {
-    state = const AsyncValue.loading();
-    state = await AsyncValue.guard(() async {
+    final previous = state.value ?? [];
+    state = AsyncData([
+      for (final f in previous)
+        if (f.id == file.id) file else f,
+    ]);
+    try {
       await DatabaseHelper.instance.updateFile(file);
-      return await DatabaseHelper.instance.getAllFiles();
-    });
+    } catch (e, st) {
+      state = AsyncError(e, st);
+    }
   }
 }
 

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:file_selector/file_selector.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/state/settings_provider.dart';
 
@@ -13,7 +12,6 @@ class SettingsScreen extends ConsumerStatefulWidget {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   late TextEditingController _apiKeyController;
-  late TextEditingController _workspaceController;
   late TextEditingController _newCityController;
   late TextEditingController _newCountryController;
 
@@ -21,7 +19,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   void initState() {
     super.initState();
     _apiKeyController = TextEditingController();
-    _workspaceController = TextEditingController();
     _newCityController = TextEditingController();
     _newCountryController = TextEditingController();
   }
@@ -34,16 +31,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (_apiKeyController.text.isEmpty && s.apiKey != null) {
         _apiKeyController.text = s.apiKey!;
       }
-      if (_workspaceController.text.isEmpty && s.workspacePath != null) {
-        _workspaceController.text = s.workspacePath!;
-      }
     });
   }
 
   @override
   void dispose() {
     _apiKeyController.dispose();
-    _workspaceController.dispose();
     _newCityController.dispose();
     _newCountryController.dispose();
     super.dispose();
@@ -51,9 +44,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   void _saveSettings() {
     ref.read(settingsProvider.notifier).setApiKey(_apiKeyController.text);
-    ref
-        .read(settingsProvider.notifier)
-        .setWorkspacePath(_workspaceController.text);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: const Text('Settings saved successfully.'),
@@ -61,15 +51,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         behavior: SnackBarBehavior.floating,
       ),
     );
-  }
-
-  Future<void> _pickWorkspace() async {
-    final String? directoryPath = await getDirectoryPath();
-    if (directoryPath != null) {
-      setState(() {
-        _workspaceController.text = directoryPath;
-      });
-    }
   }
 
   void _addLocation() {
@@ -149,48 +130,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         borderSide: BorderSide(color: colorScheme.primary),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 32),
-                  const Text(
-                    'Workspace Folder',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _workspaceController,
-                          decoration: InputDecoration(
-                            filled: true,
-                            fillColor: colorScheme.outlineVariant,
-                            hintText: 'Select your workflow folder',
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide(
-                                color: colorScheme.outline,
-                              ),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide(
-                                color: colorScheme.primary,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      IconButton.filledTonal(
-                        onPressed: _pickWorkspace,
-                        icon: const Icon(Icons.folder_open),
-                        style: IconButton.styleFrom(
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                      ),
-                    ],
                   ),
                   const SizedBox(height: 32),
                   FilledButton(

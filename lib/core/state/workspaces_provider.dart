@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_secure_bookmarks/macos_secure_bookmarks.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -136,10 +137,10 @@ class WorkspacesNotifier extends Notifier<WorkspacesState> {
         } catch (_) {}
       }
 
-      // We keep the entry even if it doesn't exist right now,
-      // but we could mark it as invalid in UI if we wanted.
-      // For now, let's at least keep those that existed before.
-      valid.add(entry);
+      // Only keep the entry if the directory actually exists.
+      if (exists) {
+        valid.add(entry);
+      }
     }
 
     int idx = prefs.getInt(_keyCurrentIndex) ?? 0;
@@ -168,7 +169,7 @@ class WorkspacesNotifier extends Notifier<WorkspacesState> {
         bookmark = await _secureBookmarks.bookmark(Directory(pathForBookmark));
       } catch (e) {
         assert(() {
-          print('WorkspacesProvider: не удалось создать bookmark: $e');
+          debugPrint('WorkspacesProvider: не удалось создать bookmark: $e');
           return true;
         }());
       }
