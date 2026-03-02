@@ -22,6 +22,7 @@ import 'video_player_widget.dart';
 import '../../../core/state/workspaces_provider.dart';
 import '../../../models/app_file.dart';
 import '../../../models/generation_options.dart';
+import '../../../models/workflow_status.dart';
 import 'widgets/generation_editorial_section.dart';
 import 'widgets/generation_filter_bar.dart';
 import 'widgets/generation_top_bar.dart';
@@ -78,6 +79,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
   final double _numKeywords = 15;
   final _titleController = TextEditingController();
   final _keywordsController = TextEditingController();
+  final _batchTitleController = TextEditingController();
+  final _batchKeywordsController = TextEditingController();
 
   /// Есть несохранённые изменения метаданных у выбранного файла.
   bool _metadataDirty = false;
@@ -146,6 +149,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
     _releaseSecurityScopedResource();
     _titleController.dispose();
     _keywordsController.dispose();
+    _batchTitleController.dispose();
+    _batchKeywordsController.dispose();
     _searchController.dispose();
     _editorialCityController.dispose();
     _editorialCountryController.dispose();
@@ -524,6 +529,12 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         _editorialDate = null;
       }
 
+      // Если переходим в режим множественного выбора, очищаем батч-контроллеры
+      if (_selectedPaths.length > 1) {
+        _batchTitleController.clear();
+        _batchKeywordsController.clear();
+      }
+
       _lastSelectedIndex = index;
     });
   }
@@ -632,12 +643,22 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         editorialCity: _editorialCityController.text,
         editorialCountry: _editorialCountryController.text,
         editorialDate: _editorialDate?.millisecondsSinceEpoch,
+        workflowStatus: WorkflowStatus.readyToUpload,
         createdAt:
             _selectedExistingFile?.createdAt ??
             DateTime.now().millisecondsSinceEpoch,
       );
 
       await ref.read(filesProvider.notifier).addFile(newFile);
+
+      // Save to original file
+      if (!AppConstants.isVideo(fileToProcess.path)) {
+        await MetadataService.writeMetadata(
+          filePath: fileToProcess.path,
+          title: finalTitle,
+          keywords: keywordsString,
+        );
+      }
 
       // Keep it selected
       setState(() {
@@ -803,6 +824,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                     editorialCity: batchCity,
                     editorialCountry: batchCountry,
                     editorialDate: batchExif?.date?.millisecondsSinceEpoch,
+                    workflowStatus: WorkflowStatus.readyToUpload,
                   )
                 : AppFile(
                     id: const Uuid().v4(),
@@ -814,10 +836,19 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                     editorialCity: batchCity,
                     editorialCountry: batchCountry,
                     editorialDate: batchExif?.date?.millisecondsSinceEpoch,
+                    workflowStatus: WorkflowStatus.readyToUpload,
                     createdAt: DateTime.now().millisecondsSinceEpoch,
                   );
 
             await ref.read(filesProvider.notifier).addFile(newFile);
+
+            if (!AppConstants.isVideo(path)) {
+              await MetadataService.writeMetadata(
+                filePath: path,
+                title: finalTitle,
+                keywords: keywordsString,
+              );
+            }
 
             if (mounted) {
               setState(() {
@@ -856,8 +887,79 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
   Future<void> _saveChanges() async {
     final title = _titleController.text.trim();
     final keywords = _keywordsController.text.trim();
+    final batchTitle = _batchTitleController.text.trim();
+    final batchKeywords = _batchKeywordsController.text.trim();
 
-    if (_selectedExistingFile != null) {
+    if (_selectedPaths.length > 1) {
+      int savedCount = 0;
+      final dbFiles = ref.read(filesProvider).value ?? [];
+
+      setState(() => _isLoading = true);
+      try {
+        for (final path in _selectedPaths) {
+          final existing = dbFiles.firstWhereOrNull((f) => f.path == path);
+
+          AppFile newFile;
+          if (existing != null) {
+            newFile = existing.copyWith(
+              metadataTitle: batchTitle.isNotEmpty
+                  ? batchTitle
+                  : existing.metadataTitle,
+              metadataKeywords: batchKeywords.isNotEmpty
+                  ? batchKeywords
+                  : existing.metadataKeywords,
+              isEditorial: _isEditorial,
+              editorialCity: _editorialCityController.text.isNotEmpty
+                  ? _editorialCityController.text
+                  : existing.editorialCity,
+              editorialCountry: _editorialCountryController.text.isNotEmpty
+                  ? _editorialCountryController.text
+                  : existing.editorialCountry,
+              editorialDate:
+                  _editorialDate?.millisecondsSinceEpoch ??
+                  existing.editorialDate,
+              workflowStatus: WorkflowStatus.readyToUpload,
+            );
+            await ref.read(filesProvider.notifier).updateFile(newFile);
+          } else {
+            newFile = AppFile(
+              id: const Uuid().v4(),
+              path: path,
+              filename: path.split(Platform.pathSeparator).last,
+              metadataTitle: batchTitle,
+              metadataKeywords: batchKeywords,
+              isEditorial: _isEditorial,
+              editorialCity: _editorialCityController.text,
+              editorialCountry: _editorialCountryController.text,
+              editorialDate: _editorialDate?.millisecondsSinceEpoch,
+              workflowStatus: WorkflowStatus.readyToUpload,
+              createdAt: DateTime.now().millisecondsSinceEpoch,
+            );
+            await ref.read(filesProvider.notifier).addFile(newFile);
+          }
+
+          if (!AppConstants.isVideo(path)) {
+            await MetadataService.writeMetadata(
+              filePath: path,
+              title: newFile.metadataTitle ?? '',
+              keywords: newFile.metadataKeywords ?? '',
+            );
+          }
+          savedCount++;
+        }
+
+        if (mounted) {
+          setState(() {
+            _metadataDirty = false;
+          });
+          _showSuccess('Изменения сохранены для $savedCount файлов.');
+        }
+      } catch (e) {
+        _showError('Batch save error: $e');
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
+      }
+    } else if (_selectedExistingFile != null) {
       final updatedFile = _selectedExistingFile!.copyWith(
         metadataTitle: title,
         metadataKeywords: keywords,
@@ -865,6 +967,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         editorialCity: _editorialCityController.text,
         editorialCountry: _editorialCountryController.text,
         editorialDate: _editorialDate?.millisecondsSinceEpoch,
+        workflowStatus: WorkflowStatus.readyToUpload,
       );
       await ref.read(filesProvider.notifier).updateFile(updatedFile);
 
@@ -897,6 +1000,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         editorialCity: _editorialCityController.text,
         editorialCountry: _editorialCountryController.text,
         editorialDate: _editorialDate?.millisecondsSinceEpoch,
+        workflowStatus: WorkflowStatus.readyToUpload,
         createdAt: DateTime.now().millisecondsSinceEpoch,
       );
       await ref.read(filesProvider.notifier).addFile(newFile);
@@ -1073,6 +1177,47 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
           selectedLocalInspectorPath: _selectedLocalInspectorFile?.path,
         ),
         const SizedBox(height: 16),
+        const Divider(),
+        const SizedBox(height: 16),
+        const GenerationFormLabel(
+          'BATCH TITLE (оставьте пустым для сохранения текущего)',
+        ),
+        const SizedBox(height: 6),
+        TextField(
+          controller: _titleController,
+          decoration: _inputDecoration(context),
+          style: const TextStyle(fontSize: 14),
+          onChanged: (_) => setState(() => _metadataDirty = true),
+        ),
+        const SizedBox(height: 16),
+        const GenerationFormLabel(
+          'BATCH KEYWORDS (оставьте пустым для сохранения текущего)',
+        ),
+        const SizedBox(height: 6),
+        TextField(
+          controller: _keywordsController,
+          maxLines: 4,
+          decoration: _inputDecoration(context),
+          style: const TextStyle(fontSize: 14, height: 1.5),
+          onChanged: (_) => setState(() => _metadataDirty = true),
+        ),
+        if (_isLoading)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: LinearProgressIndicator(),
+          ),
+        const SizedBox(height: 32),
+        FilledButton.icon(
+          onPressed: _isLoading ? null : _saveChanges,
+          icon: const Icon(Icons.save, size: 18),
+          label: Text('Сохранить изменения для ${paths.length} файлов'),
+          style: FilledButton.styleFrom(
+            minimumSize: const Size.fromHeight(44),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        ),
         const SizedBox(height: 16),
         Text(
           'Кнопка «AI Tag» в левой панели — генерация тегов для всех выбранных',

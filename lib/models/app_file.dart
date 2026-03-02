@@ -1,3 +1,5 @@
+import 'workflow_status.dart';
+
 class AppFile {
   final String id;
   final String path;
@@ -9,6 +11,7 @@ class AppFile {
   final String? editorialCity;
   final String? editorialCountry;
   final int? editorialDate;
+  final WorkflowStatus workflowStatus;
   final int createdAt;
 
   AppFile({
@@ -22,6 +25,7 @@ class AppFile {
     this.editorialCity,
     this.editorialCountry,
     this.editorialDate,
+    this.workflowStatus = WorkflowStatus.newFile,
     required this.createdAt,
   });
 
@@ -36,6 +40,7 @@ class AppFile {
     Object? editorialCity = _sentinel,
     Object? editorialCountry = _sentinel,
     Object? editorialDate = _sentinel,
+    WorkflowStatus? workflowStatus,
     int? createdAt,
   }) {
     return AppFile(
@@ -61,6 +66,7 @@ class AppFile {
       editorialDate: editorialDate == _sentinel
           ? this.editorialDate
           : editorialDate as int?,
+      workflowStatus: workflowStatus ?? this.workflowStatus,
       createdAt: createdAt ?? this.createdAt,
     );
   }
@@ -77,6 +83,7 @@ class AppFile {
       'editorial_city': editorialCity,
       'editorial_country': editorialCountry,
       'editorial_date': editorialDate,
+      'workflow_status': workflowStatus.storageValue,
       'created_at': createdAt,
     };
   }
@@ -93,6 +100,7 @@ class AppFile {
       editorialCity: map['editorial_city'] as String?,
       editorialCountry: map['editorial_country'] as String?,
       editorialDate: map['editorial_date'] as int?,
+      workflowStatus: workflowStatusFromStorage(map['workflow_status'] as String?),
       createdAt: map['created_at'] as int,
     );
   }
