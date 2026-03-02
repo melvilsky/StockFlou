@@ -22,6 +22,7 @@ import 'video_player_widget.dart';
 import '../../../core/state/workspaces_provider.dart';
 import '../../../models/app_file.dart';
 import '../../../models/generation_options.dart';
+import '../../../models/workflow_status.dart';
 import 'widgets/generation_editorial_section.dart';
 import 'widgets/generation_filter_bar.dart';
 import 'widgets/generation_top_bar.dart';
@@ -632,6 +633,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         editorialCity: _editorialCityController.text,
         editorialCountry: _editorialCountryController.text,
         editorialDate: _editorialDate?.millisecondsSinceEpoch,
+        workflowStatus: WorkflowStatus.metadataReady,
         createdAt:
             _selectedExistingFile?.createdAt ??
             DateTime.now().millisecondsSinceEpoch,
@@ -803,6 +805,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                     editorialCity: batchCity,
                     editorialCountry: batchCountry,
                     editorialDate: batchExif?.date?.millisecondsSinceEpoch,
+                    workflowStatus: WorkflowStatus.metadataReady,
                   )
                 : AppFile(
                     id: const Uuid().v4(),
@@ -814,6 +817,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                     editorialCity: batchCity,
                     editorialCountry: batchCountry,
                     editorialDate: batchExif?.date?.millisecondsSinceEpoch,
+                    workflowStatus: WorkflowStatus.metadataReady,
                     createdAt: DateTime.now().millisecondsSinceEpoch,
                   );
 
@@ -865,6 +869,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         editorialCity: _editorialCityController.text,
         editorialCountry: _editorialCountryController.text,
         editorialDate: _editorialDate?.millisecondsSinceEpoch,
+        workflowStatus: WorkflowStatus.metadataReady,
       );
       await ref.read(filesProvider.notifier).updateFile(updatedFile);
 
@@ -897,6 +902,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         editorialCity: _editorialCityController.text,
         editorialCountry: _editorialCountryController.text,
         editorialDate: _editorialDate?.millisecondsSinceEpoch,
+        workflowStatus: WorkflowStatus.metadataReady,
         createdAt: DateTime.now().millisecondsSinceEpoch,
       );
       await ref.read(filesProvider.notifier).addFile(newFile);
