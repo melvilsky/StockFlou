@@ -65,11 +65,29 @@ class UploadQueueNotifier extends AsyncNotifier<List<UploadJob>> {
   Future<void> processQueue() async {
     if (_processing) return;
     _processing = true;
+
+    // Define concurrency limit (e.g., max 3 simultaneous uploads)
+    const maxConcurrentJobs = 3;
+
     try {
       while (true) {
-        final snapshot = state.value ?? [];
-        final next = snapshot.firstWhere(
+        final jobs = state.value ?? [];
+
+        // Count how many are currently uploading
+        final currentlyUploading = jobs
+            .where((j) => j.status == UploadJobStatus.uploading)
+            .length;
+
+        // If we are already at capacity, stop attempting to start new ones.
+        // We will trigger processQueue again when one finishes.
+        if (currentlyUploading >= maxConcurrentJobs) {
+          break;
+        }
+
+        // Find the next pending job
+        final next = jobs.firstWhere(
           (job) => job.status == UploadJobStatus.pending,
+          // null if none left
           orElse: () => const UploadJob(
             id: '',
             fileId: '',
@@ -82,10 +100,21 @@ class UploadQueueNotifier extends AsyncNotifier<List<UploadJob>> {
           ),
         );
 
-        if (next.id.isEmpty) break;
-        await _runJob(next);
+        if (next.id.isEmpty) {
+          // No more pending jobs
+          break;
+        }
+
+        // We do NOT await _runJob here. We fire and let it spin up concurrently
+        // up to the limit of our while loop check.
+        unawaited(_runJob(next));
+
+        // A minimal yield to ensure the state has time to update the job to "uploading"
+        // before the loop iterates again, preventing the exact same job from being picked up twice.
+        await Future.delayed(const Duration(milliseconds: 50));
       }
     } finally {
+      // Free the processing lock so future triggers can check the queue again
       _processing = false;
     }
   }
@@ -157,7 +186,10 @@ class UploadQueueNotifier extends AsyncNotifier<List<UploadJob>> {
 
     final credentials = _resolveCredentials(uploading.stockKey);
     if (credentials == null || credentials.isEmpty) {
-      await _failJob(uploading, 'Missing credentials for ${uploading.stockKey}.');
+      await _failJob(
+        uploading,
+        'Missing credentials for ${uploading.stockKey}.',
+      );
       return;
     }
 

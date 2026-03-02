@@ -5,6 +5,9 @@ import '../../../core/state/files_provider.dart';
 import '../../../core/state/upload_queue_provider.dart';
 import '../../../models/upload_job.dart';
 import '../../../models/workflow_status.dart';
+import '../../../models/qc_report.dart';
+import '../../../core/services/qc_checker.dart';
+import 'widgets/qc_report_dialog.dart';
 
 class HistoryScreen extends ConsumerWidget {
   const HistoryScreen({super.key});
@@ -21,9 +24,15 @@ class HistoryScreen extends ConsumerWidget {
         .where((f) => f.workflowStatus.canBeQueuedForUpload)
         .toList();
 
-    final uploadingCount = jobs.where((j) => j.status == UploadJobStatus.uploading).length;
-    final pendingCount = jobs.where((j) => j.status == UploadJobStatus.pending).length;
-    final completedCount = jobs.where((j) => j.status == UploadJobStatus.success).length;
+    final uploadingCount = jobs
+        .where((j) => j.status == UploadJobStatus.uploading)
+        .length;
+    final pendingCount = jobs
+        .where((j) => j.status == UploadJobStatus.pending)
+        .length;
+    final completedCount = jobs
+        .where((j) => j.status == UploadJobStatus.success)
+        .length;
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -35,17 +44,48 @@ class HistoryScreen extends ConsumerWidget {
           TextButton.icon(
             onPressed: readyFiles.isEmpty
                 ? null
-                : () => ref.read(uploadQueueProvider.notifier).enqueueFiles(
-                      files: readyFiles,
-                      stockKey: 'adobe',
-                      protocol: UploadProtocol.sftp,
-                    ),
+                : () async {
+                    // 1. Run QC
+                    final checker = QcChecker();
+                    final reports = <String, QcReport>{};
+                    bool hasIssues = false;
+                    for (final file in readyFiles) {
+                      final report = checker.validateFile(file, 'adobe');
+                      if (!report.isClean) {
+                        reports[file.id] = report;
+                        hasIssues = true;
+                      }
+                    }
+
+                    // 2. If issues found, show dialog
+                    if (hasIssues) {
+                      final shouldProceed = await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) =>
+                            QcReportDialog(files: readyFiles, reports: reports),
+                      );
+                      // If user cancelled or dialog was blocked by errors
+                      if (shouldProceed != true) return;
+                    }
+
+                    // 3. Queue files
+                    if (context.mounted) {
+                      ref
+                          .read(uploadQueueProvider.notifier)
+                          .enqueueFiles(
+                            files: readyFiles,
+                            stockKey: 'adobe',
+                            protocol: UploadProtocol.sftp,
+                          );
+                    }
+                  },
             icon: const Icon(Icons.add),
             label: Text('Queue ready (${readyFiles.length})'),
           ),
           const SizedBox(width: 8),
           OutlinedButton.icon(
-            onPressed: () => ref.read(uploadQueueProvider.notifier).processQueue(),
+            onPressed: () =>
+                ref.read(uploadQueueProvider.notifier).processQueue(),
             icon: const Icon(Icons.play_arrow, size: 16),
             label: const Text('Start'),
           ),
@@ -80,10 +120,15 @@ class HistoryScreen extends ConsumerWidget {
                   border: Border.all(color: colorScheme.outline),
                 ),
                 child: jobs.isEmpty
-                    ? const Center(child: Text('Очередь пуста. Добавьте ready-to-upload файлы.'))
+                    ? const Center(
+                        child: Text(
+                          'Очередь пуста. Добавьте ready-to-upload файлы.',
+                        ),
+                      )
                     : ListView.separated(
                         itemCount: jobs.length,
-                        separatorBuilder: (_, __) => Divider(height: 1, color: colorScheme.outline),
+                        separatorBuilder: (_, __) =>
+                            Divider(height: 1, color: colorScheme.outline),
                         itemBuilder: (context, index) {
                           final job = jobs[index];
                           return _JobRow(job: job);
@@ -118,9 +163,17 @@ class _StatCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: TextStyle(color: colorScheme.onSurface.withValues(alpha: 0.7))),
+            Text(
+              title,
+              style: TextStyle(
+                color: colorScheme.onSurface.withValues(alpha: 0.7),
+              ),
+            ),
             const SizedBox(height: 6),
-            Text(count, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            Text(
+              count,
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            ),
           ],
         ),
       ),
@@ -135,36 +188,42 @@ class _JobRow extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final colorScheme = Theme.of(context).colorScheme;
     return ListTile(
       title: Text(job.filename, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text('${job.stockKey.toUpperCase()} • ${job.protocol.label} • ${job.status.storageValue}'),
+      subtitle: Text(
+        '${job.stockKey.toUpperCase()} • ${job.protocol.label} • ${job.status.storageValue}',
+      ),
       trailing: SizedBox(
         width: 260,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Expanded(
-              child: LinearProgressIndicator(value: job.progress <= 0 ? null : job.progress.clamp(0, 1)),
+              child: LinearProgressIndicator(
+                value: job.progress <= 0 ? null : job.progress.clamp(0, 1),
+              ),
             ),
             IconButton(
               tooltip: 'Pause',
               onPressed: job.status == UploadJobStatus.uploading
-                  ? () => ref.read(uploadQueueProvider.notifier).pauseJob(job.id)
+                  ? () =>
+                        ref.read(uploadQueueProvider.notifier).pauseJob(job.id)
                   : null,
               icon: const Icon(Icons.pause, size: 18),
             ),
             IconButton(
               tooltip: 'Resume',
               onPressed: job.status == UploadJobStatus.paused
-                  ? () => ref.read(uploadQueueProvider.notifier).resumeJob(job.id)
+                  ? () =>
+                        ref.read(uploadQueueProvider.notifier).resumeJob(job.id)
                   : null,
               icon: const Icon(Icons.play_arrow, size: 18),
             ),
             IconButton(
               tooltip: 'Retry',
               onPressed: job.status == UploadJobStatus.error
-                  ? () => ref.read(uploadQueueProvider.notifier).retryJob(job.id)
+                  ? () =>
+                        ref.read(uploadQueueProvider.notifier).retryJob(job.id)
                   : null,
               icon: const Icon(Icons.refresh, size: 18),
             ),

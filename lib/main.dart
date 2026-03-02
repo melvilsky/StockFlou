@@ -158,15 +158,6 @@ class _MainShellState extends ConsumerState<MainShell> {
                         compact: true,
                       ),
                       _SidebarIconItem(
-                        icon: Icons.schedule_outlined,
-                        tooltip: 'Recent',
-                        isSelected: currentIndex == NavigationTab.recent,
-                        onTap: () => ref
-                            .read(navigationProvider.notifier)
-                            .setTab(NavigationTab.recent),
-                        compact: true,
-                      ),
-                      _SidebarIconItem(
                         icon: Icons.cloud_upload_outlined,
                         tooltip: 'Uploads',
                         isSelected: currentIndex == NavigationTab.uploads,
@@ -206,8 +197,7 @@ class _MainShellState extends ConsumerState<MainShell> {
               index: currentIndex.index,
               children: const [
                 GenerationScreen(), // workspace
-                HistoryScreen(), // recent
-                Center(child: Text('Uploads Context')), // uploads
+                HistoryScreen(), // uploads
                 Center(child: Text('Analytics Dashboard')), // analytics
                 SettingsScreen(), // settings
               ],
