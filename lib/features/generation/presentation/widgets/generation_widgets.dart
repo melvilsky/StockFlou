@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/single_click_area.dart';
+import '../../../../models/app_file.dart';
 
 /// Small text label used above form fields.
 class GenerationFormLabel extends StatelessWidget {
@@ -25,12 +26,120 @@ class GenerationFormLabel extends StatelessWidget {
   }
 }
 
-/// File grid card with thumbnail and selection state.
+// ─── Tag UI helpers ──────────────────────────────────────────────────────────
+
+/// Returns (label, color, icon) for a known tag key.
+(String, Color, IconData) _tagMeta(String tag) {
+  switch (tag) {
+    case AppTags.aiGenerated:
+      return ('AI', const Color(0xFF7C3AED), Icons.auto_awesome);
+    case AppTags.editorial:
+      return ('Editorial', const Color(0xFFD97706), Icons.newspaper);
+    default:
+      return (tag, const Color(0xFF0891B2), Icons.label_outline);
+  }
+}
+
+/// Tiny sticker chip overlaid on the grid card image.
+/// Dark semi-transparent background + white text makes it readable on any photo.
+class _TagChip extends StatelessWidget {
+  final String tag;
+  const _TagChip(this.tag);
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color, icon) = _tagMeta(tag);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        // Dark backdrop so it reads on any photo background
+        color: const Color(0xCC000000), // 80% black
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: color.withValues(alpha: 0.7), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.4),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 10, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+              letterSpacing: 0.2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Compact removable chip for the inspector / multi-select panel.
+class TagBadge extends StatelessWidget {
+  final String tag;
+  final VoidCallback? onRemove;
+
+  const TagBadge(this.tag, {super.key, this.onRemove});
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color, icon) = _tagMeta(tag);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: color),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+          if (onRemove != null) ...[
+            const SizedBox(width: 4),
+            GestureDetector(
+              onTap: onRemove,
+              child: Icon(
+                Icons.close,
+                size: 12,
+                color: color.withValues(alpha: 0.7),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ─── GenerationGridCard ──────────────────────────────────────────────────────
+
+/// File grid card with thumbnail, selection state, and tag chips.
 class GenerationGridCard extends StatelessWidget {
   final String imagePath;
   final String filename;
   final bool isTagged;
   final bool isSelected;
+  final List<String> tags;
   final VoidCallback onTap;
 
   const GenerationGridCard({
@@ -40,6 +149,7 @@ class GenerationGridCard extends StatelessWidget {
     required this.isTagged,
     required this.isSelected,
     required this.onTap,
+    this.tags = const [],
   });
 
   @override
@@ -72,68 +182,92 @@ class GenerationGridCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          // Image layer — stable, not rebuilt on selection change
-                          if (isVideo)
-                            Container(
-                              color: colorScheme.surfaceContainerHighest,
-                              child: Center(
-                                child: Icon(
-                                  Icons.videocam,
-                                  size: 48,
-                                  color: colorScheme.primary.withValues(
-                                    alpha: 0.5,
+                    child: Stack(
+                      children: [
+                        // Rounded image / video inside ClipRRect
+                        Positioned.fill(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                // Image / video thumbnail
+                                if (isVideo)
+                                  Container(
+                                    color: colorScheme.surfaceContainerHighest,
+                                    child: Center(
+                                      child: Icon(
+                                        Icons.videocam,
+                                        size: 48,
+                                        color: colorScheme.primary.withValues(
+                                          alpha: 0.5,
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  Image.file(
+                                    File(imagePath),
+                                    fit: BoxFit.cover,
+                                    gaplessPlayback: true,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      color:
+                                          colorScheme.surfaceContainerHighest,
+                                      child: Icon(
+                                        Icons.broken_image_outlined,
+                                        color: colorScheme.onSurface.withValues(
+                                          alpha: 0.3,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                // Selection border overlay
+                                AnimatedContainer(
+                                  duration: const Duration(milliseconds: 150),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: isSelected
+                                          ? colorScheme.primary
+                                          : Colors.transparent,
+                                      width: 2,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            )
-                          else
-                            Image.file(
-                              File(imagePath),
-                              fit: BoxFit.cover,
-                              // gaplessPlayback prevents flicker on rebuild
-                              gaplessPlayback: true,
-                              errorBuilder: (_, __, ___) => Container(
-                                color: colorScheme.surfaceContainerHighest,
-                                child: Icon(
-                                  Icons.broken_image_outlined,
-                                  color: colorScheme.onSurface.withValues(
-                                    alpha: 0.3,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          // Selection overlay — only this layer rebuilds
-                          AnimatedContainer(
-                            duration: const Duration(milliseconds: 150),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: isSelected
-                                    ? colorScheme.primary
-                                    : Colors.transparent,
-                                width: 2,
-                              ),
+                              ],
                             ),
                           ),
-                          if (isSelected)
-                            Align(
-                              alignment: Alignment.topRight,
-                              child: Padding(
-                                padding: const EdgeInsets.all(8.0),
-                                child: Icon(
-                                  Icons.check_circle,
-                                  color: colorScheme.primary,
-                                  size: 20,
-                                ),
-                              ),
+                        ),
+                        // Checkmark when selected — outside clip, top-right
+                        if (isSelected)
+                          Positioned(
+                            top: 6,
+                            right: 6,
+                            child: Icon(
+                              Icons.check_circle,
+                              color: colorScheme.primary,
+                              size: 20,
                             ),
-                        ],
-                      ),
+                          ),
+                        // Tag stickers — outside clip, top-left
+                        if (tags.isNotEmpty)
+                          Positioned(
+                            top: 6,
+                            left: 6,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: tags
+                                  .take(3)
+                                  .map(
+                                    (t) => Padding(
+                                      padding: const EdgeInsets.only(bottom: 3),
+                                      child: _TagChip(t),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -191,6 +325,8 @@ class GenerationGridCard extends StatelessWidget {
     );
   }
 }
+
+// ─── GenerationStockStatusCard ───────────────────────────────────────────────
 
 /// Stock platform status card (Adobe, Shutterstock, etc.).
 class GenerationStockStatusCard extends StatelessWidget {

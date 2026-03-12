@@ -24,10 +24,11 @@ class MetadataService {
         '-overwrite_original',
         '-ObjectName=$title',
         '-Title=$title',
-        if (description != null && description.isNotEmpty)
+        if (description != null && description.isNotEmpty) ...[
           '-Caption-Abstract=$description',
-        if (description != null && description.isNotEmpty)
           '-Description=$description',
+          '-ImageDescription=$description',
+        ],
         // Clear existing keywords first, then write all new ones individually
         '-Keywords=',
         '-Subject=',

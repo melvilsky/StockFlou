@@ -8,12 +8,13 @@ import '../../models/stock_credentials.dart';
 import '../../models/upload_job.dart';
 import '../../models/workflow_status.dart';
 import '../database/database_helper.dart';
-import '../services/upload/stock_upload_gateway.dart';
+import '../services/upload/composite_upload_gateway.dart';
 import 'files_provider.dart';
 import 'settings_provider.dart';
+import '../services/upload/stock_upload_gateway.dart';
 
 final stockUploadGatewayProvider = Provider<StockUploadGateway>(
-  (ref) => const SocketHandshakeUploadGateway(),
+  (ref) => const CompositeUploadGateway(),
 );
 
 class UploadQueueNotifier extends AsyncNotifier<List<UploadJob>> {
@@ -31,11 +32,16 @@ class UploadQueueNotifier extends AsyncNotifier<List<UploadJob>> {
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final jobs = <UploadJob>[];
+    final settings = ref.read(settingsProvider).value;
 
     for (final file in files) {
-      if (!file.workflowStatus.canBeQueuedForUpload) {
+      if (!file.workflowStatus.canBeQueuedForUpload) continue;
+
+      // Tag routing: skip files whose tags don't match this stock's filter
+      if (settings != null && !settings.stockAcceptsTags(stockKey, file.tags)) {
         continue;
       }
+
       jobs.add(
         UploadJob(
           id: const Uuid().v4(),
@@ -105,13 +111,25 @@ class UploadQueueNotifier extends AsyncNotifier<List<UploadJob>> {
           break;
         }
 
-        // We do NOT await _runJob here. We fire and let it spin up concurrently
-        // up to the limit of our while loop check.
-        unawaited(_runJob(next));
+        // Synchronously update the state to prevent picking up the same job in the next loop iteration
+        final currentJobs = List.of(state.value ?? <UploadJob>[]);
+        final idx = currentJobs.indexWhere((j) => j.id == next.id);
+        if (idx != -1) {
+          final uploadingJob = next.copyWith(
+            status: UploadJobStatus.uploading,
+            progress: 0.05,
+            errorMessage: null,
+            updatedAt: DateTime.now().millisecondsSinceEpoch,
+          );
+          currentJobs[idx] = uploadingJob;
+          state = AsyncData(currentJobs);
 
-        // A minimal yield to ensure the state has time to update the job to "uploading"
-        // before the loop iterates again, preventing the exact same job from being picked up twice.
-        await Future.delayed(const Duration(milliseconds: 50));
+          // We do NOT await _runJob here. We fire and let it spin up concurrently
+          // up to the limit of our while loop check.
+          unawaited(_runJob(uploadingJob));
+        } else {
+          break;
+        }
       }
     } finally {
       // Free the processing lock so future triggers can check the queue again
@@ -163,6 +181,18 @@ class UploadQueueNotifier extends AsyncNotifier<List<UploadJob>> {
     unawaited(processQueue());
   }
 
+  Future<void> clearInactive() async {
+    final jobs = state.value ?? [];
+    final activeJobs = jobs.where((j) => 
+      j.status == UploadJobStatus.pending || 
+      j.status == UploadJobStatus.uploading || 
+      j.status == UploadJobStatus.paused
+    ).toList();
+    
+    state = AsyncData(activeJobs);
+    await DatabaseHelper.instance.clearInactiveJobs();
+  }
+
   Future<void> cancelAll() async {
     final jobs = state.value ?? [];
     for (final job in jobs.where(
@@ -175,14 +205,9 @@ class UploadQueueNotifier extends AsyncNotifier<List<UploadJob>> {
     }
   }
 
-  Future<void> _runJob(UploadJob job) async {
-    final uploading = job.copyWith(
-      status: UploadJobStatus.uploading,
-      progress: 0.05,
-      errorMessage: null,
-      updatedAt: DateTime.now().millisecondsSinceEpoch,
-    );
-    await _replace(uploading);
+  Future<void> _runJob(UploadJob uploading) async {
+    // We already updated state synchronously in processQueue, persist it to DB.
+    await DatabaseHelper.instance.updateUploadJob(uploading);
 
     final credentials = _resolveCredentials(uploading.stockKey);
     if (credentials == null || credentials.isEmpty) {
@@ -224,6 +249,9 @@ class UploadQueueNotifier extends AsyncNotifier<List<UploadJob>> {
       await _markFileUploaded(success.fileId);
     } catch (e) {
       await _failJob(uploading, e.toString());
+    } finally {
+      // Regardless of success/failure, trigger processQueue to pick up any pending jobs
+      unawaited(processQueue());
     }
   }
 

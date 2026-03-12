@@ -1,16 +1,19 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../../core/services/geocoding_service.dart';
 import '../../../../core/services/metadata_service.dart';
+import '../../../../core/state/editorial_state_provider.dart';
 import '../../../../core/state/files_provider.dart';
 import '../../../../core/state/settings_provider.dart';
-import '../../../../core/widgets/single_click_area.dart';
 import '../../../../models/app_file.dart';
 import 'generation_widgets.dart';
 
-/// Editorial metadata section: checkbox + city / country / date fields.
-/// Owns its own form controllers so the parent doesn't need to manage them.
+/// Editorial metadata section: toggle pills + city / country / date fields.
+/// Reads and writes editorial state via [editorialStateProvider].
 class GenerationEditorialSection extends ConsumerStatefulWidget {
   final bool isMulti;
   final Set<String> selectedPaths;
@@ -32,42 +35,38 @@ class GenerationEditorialSection extends ConsumerStatefulWidget {
 
 class _GenerationEditorialSectionState
     extends ConsumerState<GenerationEditorialSection> {
-  bool _isEditorial = false;
+  // Text controllers kept local because RawAutocomplete needs them,
+  // but they sync with the provider on every change.
   final _cityController = TextEditingController();
   final _countryController = TextEditingController();
   final _cityFocusNode = FocusNode();
   final _countryFocusNode = FocusNode();
-  DateTime? _editorialDate;
 
   static const _months = [
-    'January',
-    'February',
-    'March',
-    'April',
-    'May',
-    'June',
-    'July',
-    'August',
-    'September',
-    'October',
-    'November',
-    'December',
+    'January', 'February', 'March', 'April',
+    'May', 'June', 'July', 'August',
+    'September', 'October', 'November', 'December',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    // Sync text controllers from provider on first build
+    final state = ref.read(editorialStateProvider);
+    _cityController.text = state.city;
+    _countryController.text = state.country;
+  }
 
   @override
   void didUpdateWidget(GenerationEditorialSection oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Sync state when selected file changes
+    // When selected file changes, sync text controllers from provider
     final newFile = widget.selectedExistingFile;
     final oldFile = oldWidget.selectedExistingFile;
     if (newFile?.id != oldFile?.id) {
-      _isEditorial = newFile?.isEditorial ?? false;
-      _cityController.text = newFile?.editorialCity ?? '';
-      _countryController.text = newFile?.editorialCountry ?? '';
-      final ms = newFile?.editorialDate;
-      _editorialDate = ms != null
-          ? DateTime.fromMillisecondsSinceEpoch(ms)
-          : null;
+      final state = ref.read(editorialStateProvider);
+      _cityController.text = state.city;
+      _countryController.text = state.country;
     }
   }
 
@@ -83,6 +82,7 @@ class _GenerationEditorialSectionState
   String _formatDate(DateTime date) =>
       '${_months[date.month - 1]} ${date.day} ${date.year}';
 
+  /// Update editorial fields on DB files or insert local files as new DB entries.
   Future<void> _batchUpdate({
     bool? isEditorial,
     String? city,
@@ -92,24 +92,71 @@ class _GenerationEditorialSectionState
     final allFiles = ref.read(filesProvider).value ?? [];
     for (final path in widget.selectedPaths) {
       final idx = allFiles.indexWhere((f) => f.path == path);
-      if (idx == -1) continue;
-      final f = allFiles[idx];
-      final updated = AppFile(
-        id: f.id,
-        path: f.path,
-        filename: f.filename,
-        metadataTitle: f.metadataTitle,
-        metadataDescription: f.metadataDescription,
-        metadataKeywords: f.metadataKeywords,
-        isEditorial: isEditorial ?? f.isEditorial,
-        editorialCity: city ?? f.editorialCity,
-        editorialCountry: country ?? f.editorialCountry,
-        editorialDate: date != null
-            ? date.millisecondsSinceEpoch
-            : f.editorialDate,
-        createdAt: f.createdAt,
-      );
-      await ref.read(filesProvider.notifier).updateFile(updated);
+      
+      if (idx == -1) {
+        // File does not exist in DB yet, create it
+        final shouldBeEditorial = isEditorial ?? false;
+        final newTags = shouldBeEditorial ? [AppTags.editorial] : <String>[];
+        
+        final newFile = AppFile(
+          id: const Uuid().v4(),
+          path: path,
+          filename: path.split(Platform.pathSeparator).last,
+          isEditorial: shouldBeEditorial,
+          editorialCity: city,
+          editorialCountry: country,
+          editorialDate: date?.millisecondsSinceEpoch,
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+          tags: newTags,
+        );
+        await ref.read(filesProvider.notifier).addFile(newFile);
+      } else {
+        // File already in DB, update it
+        final f = allFiles[idx];
+        final newTags = List<String>.from(f.tags);
+        final shouldBeEditorial = isEditorial ?? f.isEditorial;
+        if (shouldBeEditorial && !newTags.contains(AppTags.editorial)) {
+          newTags.add(AppTags.editorial);
+        } else if (!shouldBeEditorial) {
+          newTags.remove(AppTags.editorial);
+        }
+        final updated = f.copyWith(
+          isEditorial: isEditorial ?? f.isEditorial,
+          editorialCity: city ?? f.editorialCity,
+          editorialCountry: country ?? f.editorialCountry,
+          editorialDate: date != null
+              ? date.millisecondsSinceEpoch
+              : f.editorialDate,
+          tags: newTags,
+        );
+        await ref.read(filesProvider.notifier).updateFile(updated);
+      }
+    }
+  }
+
+  Future<void> _updateAITag(bool isAI) async {
+    final allFiles = ref.read(filesProvider).value ?? [];
+    for (final path in widget.selectedPaths) {
+      final idx = allFiles.indexWhere((f) => f.path == path);
+      if (idx == -1) {
+        // File does not exist in DB yet, create it
+        final newTags = isAI ? [AppTags.aiGenerated] : <String>[];
+        final newFile = AppFile(
+          id: const Uuid().v4(),
+          path: path,
+          filename: path.split(Platform.pathSeparator).last,
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+          tags: newTags,
+        );
+        await ref.read(filesProvider.notifier).addFile(newFile);
+      } else {
+        // File exists, update it
+        final f = allFiles[idx];
+        final updated = isAI
+            ? f.withTag(AppTags.aiGenerated)
+            : f.withoutTag(AppTags.aiGenerated);
+        await ref.read(filesProvider.notifier).updateFile(updated);
+      }
     }
   }
 
@@ -173,6 +220,18 @@ class _GenerationEditorialSectionState
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final editorial = ref.watch(editorialStateProvider);
+    final notifier = ref.read(editorialStateProvider.notifier);
+
+    // Keep text controllers in sync with provider (provider is source of truth
+    // when changed externally, e.g. by _toggleSelection in parent).
+    if (_cityController.text != editorial.city) {
+      _cityController.text = editorial.city;
+    }
+    if (_countryController.text != editorial.country) {
+      _countryController.text = editorial.country;
+    }
+
     final savedLocations =
         ref.watch(settingsProvider).value?.savedLocations ?? [];
     final cities = savedLocations
@@ -189,87 +248,96 @@ class _GenerationEditorialSectionState
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Editorial checkbox
+        // Tag toggle pills — AI and Editorial side by side
+        const SizedBox(height: 4),
         Row(
           children: [
-            SizedBox(
-              width: 24,
-              height: 24,
-              child: Checkbox(
-                value: _isEditorial,
-                onChanged: (value) async {
-                  setState(() => _isEditorial = value ?? false);
-                  await _batchUpdate(isEditorial: _isEditorial);
-                },
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
+            _TagToggle(
+              label: 'AI',
+              icon: Icons.auto_awesome,
+              color: const Color(0xFF7C3AED),
+              isActive: editorial.isAI,
+              onTap: () async {
+                final newVal = !editorial.isAI;
+                notifier.setAI(newVal);
+                await _updateAITag(newVal);
+              },
             ),
             const SizedBox(width: 8),
-            Text(
-              'Эдиториал',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: colorScheme.onSurface,
-              ),
-            ),
-          ],
-        ),
+            _TagToggle(
+              label: 'Эдиториал',
+              icon: Icons.newspaper,
+              color: const Color(0xFFD97706),
+              isActive: editorial.isEditorial,
+              onTap: () async {
+                final newVal = !editorial.isEditorial;
+                notifier.setEditorial(newVal);
 
-        if (_isEditorial) ...[
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              const GenerationFormLabel('LOCATION'),
-              const Spacer(),
-              SizedBox(
-                height: 28,
-                child: SingleClickArea(
-                  onTap: () async {
-                    final filePath =
-                        widget.selectedExistingFile?.path ??
-                        widget.selectedLocalInspectorPath;
-                    if (filePath == null) return;
-                    final exif = await MetadataService.readExifLocationAndDate(
-                      filePath,
-                    );
-                    if (exif.date != null) {
-                      setState(() => _editorialDate = exif.date);
-                    }
+                if (newVal) {
+                  // turned on: auto-fetch location and date
+                  String? filePath = widget.selectedExistingFile?.path ??
+                      widget.selectedLocalInspectorPath;
+                  if (filePath == null && widget.selectedPaths.isNotEmpty) {
+                    filePath = widget.selectedPaths.first;
+                  }
+
+                  String newCity = '';
+                  String newCountry = '';
+                  DateTime? newDate;
+
+                  if (filePath != null) {
+                    final exif =
+                        await MetadataService.readExifLocationAndDate(filePath);
+                    newDate = exif.date;
                     if (exif.lat != null && exif.lon != null) {
                       final geo = await GeocodingService.resolve(
                         exif.lat,
                         exif.lon,
                       );
-                      setState(() {
-                        if (geo.city != null) {
-                          _cityController.text = geo.city!;
-                        }
-                        if (geo.country != null || geo.state != null) {
-                          _countryController.text =
-                              geo.state ?? geo.country ?? '';
-                        }
-                      });
-                      await _batchUpdate(
-                        city: _cityController.text,
-                        country: _countryController.text,
-                        date: _editorialDate,
-                      );
+                      if (geo.city != null) newCity = geo.city!;
+                      newCountry = geo.country ?? geo.state ?? '';
                     }
-                  },
-                  child: FilledButton.icon(
-                    onPressed: () {},
-                    icon: const Icon(Icons.gps_fixed, size: 14),
-                    label: const Text('Авто', style: TextStyle(fontSize: 11)),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      minimumSize: Size.zero,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
+                  }
+
+                  if (newDate != null) notifier.setDate(newDate);
+                  if (newCity.isNotEmpty) {
+                    _cityController.text = newCity;
+                    notifier.setCity(newCity);
+                  }
+                  if (newCountry.isNotEmpty) {
+                    _countryController.text = newCountry;
+                    notifier.setCountry(newCountry);
+                  }
+
+                  await _batchUpdate(
+                    isEditorial: true,
+                    city: _cityController.text,
+                    country: _countryController.text,
+                    date: ref.read(editorialStateProvider).date,
+                  );
+                } else {
+                  // turned off: clear fields
+                  _cityController.clear();
+                  _countryController.clear();
+                  notifier.setCity('');
+                  notifier.setCountry('');
+                  notifier.setDate(null);
+                  // this explicitly sets fields to null/empty in DB and removes the tag
+                  await _batchUpdate(
+                    isEditorial: false,
+                    city: '',
+                    country: '',
+                    date: null,
+                  );
+                }
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        if (editorial.isEditorial) ...[
+          const SizedBox(height: 12),
+          const GenerationFormLabel('LOCATION'),
           const SizedBox(height: 6),
           // City autocomplete
           RawAutocomplete<String>(
@@ -282,13 +350,16 @@ class _GenerationEditorialSectionState
               );
             },
             onSelected: (selection) {
+              notifier.setCity(selection);
               if (_countryController.text.isEmpty) {
                 final match = savedLocations.firstWhere(
                   (loc) => loc.startsWith('$selection|'),
                   orElse: () => '',
                 );
                 if (match.isNotEmpty) {
-                  _countryController.text = match.split('|').last;
+                  final countryVal = match.split('|').last;
+                  _countryController.text = countryVal;
+                  notifier.setCountry(countryVal);
                 }
               }
               _batchUpdate(city: selection, country: _countryController.text);
@@ -297,7 +368,10 @@ class _GenerationEditorialSectionState
               return TextField(
                 controller: controller,
                 focusNode: focusNode,
-                onChanged: (val) => _batchUpdate(city: val),
+                onChanged: (val) {
+                  notifier.setCity(val);
+                  _batchUpdate(city: val);
+                },
                 decoration: _inputDecor(context).copyWith(hintText: 'Город'),
                 style: const TextStyle(fontSize: 13),
               );
@@ -321,12 +395,18 @@ class _GenerationEditorialSectionState
                 (c) => c.toLowerCase().contains(v.text.toLowerCase()),
               );
             },
-            onSelected: (selection) => _batchUpdate(country: selection),
+            onSelected: (selection) {
+              notifier.setCountry(selection);
+              _batchUpdate(country: selection);
+            },
             fieldViewBuilder: (context, controller, focusNode, _) {
               return TextField(
                 controller: controller,
                 focusNode: focusNode,
-                onChanged: (val) => _batchUpdate(country: val),
+                onChanged: (val) {
+                  notifier.setCountry(val);
+                  _batchUpdate(country: val);
+                },
                 decoration: _inputDecor(
                   context,
                 ).copyWith(hintText: 'Страна / Штат'),
@@ -341,7 +421,7 @@ class _GenerationEditorialSectionState
                   colorScheme,
                 ),
           ),
-          if (_editorialDate != null) ...[
+          if (editorial.date != null) ...[
             const SizedBox(height: 6),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -360,7 +440,7 @@ class _GenerationEditorialSectionState
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    _formatDate(_editorialDate!),
+                    _formatDate(editorial.date!),
                     style: TextStyle(
                       fontSize: 13,
                       color: colorScheme.onSurface.withValues(alpha: 0.8),
@@ -374,6 +454,67 @@ class _GenerationEditorialSectionState
 
         const SizedBox(height: 16),
       ],
+    );
+  }
+}
+
+/// Pill-shaped toggle button used for AI / Editorial tag selection.
+class _TagToggle extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  const _TagToggle({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeInOut,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: isActive ? color : color.withValues(alpha: 0.07),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: isActive ? color : color.withValues(alpha: 0.35),
+            width: 1,
+          ),
+          boxShadow: isActive
+              ? [
+                  BoxShadow(
+                    color: color.withValues(alpha: 0.25),
+                    blurRadius: 4,
+                    offset: const Offset(0, 1),
+                  ),
+                ]
+              : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 11, color: isActive ? Colors.white : color),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: isActive ? Colors.white : color,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

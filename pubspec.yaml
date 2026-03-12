@@ -19,7 +19,7 @@ publish_to: "none" # Remove this line if you wish to publish to pub.dev
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.9.2
+  sdk: ^3.7.0
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -55,6 +55,12 @@ dependencies:
   macos_secure_bookmarks: ^0.2.1
   fc_native_video_thumbnail: ^0.17.2
   video_player: ^2.10.1
+  csv: ^6.0.0
+  dartssh2: ^2.13.0
+  ftpconnect: ^2.0.10
+
+dependency_overrides:
+  video_player_avfoundation: 2.8.10
 
 dev_dependencies:
   flutter_test:

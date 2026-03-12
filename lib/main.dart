@@ -10,6 +10,9 @@ import 'core/state/workspaces_provider.dart';
 import 'features/generation/presentation/generation_screen.dart';
 import 'features/history/presentation/history_screen.dart';
 import 'features/settings/settings_screen.dart';
+import 'core/services/window_config_service.dart';
+import 'core/state/history_filter_provider.dart';
+import 'core/state/active_stocks_provider.dart';
 import 'core/widgets/single_click_area.dart';
 import 'core/constants/app_constants.dart';
 
@@ -17,18 +20,17 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await windowManager.ensureInitialized();
-  WindowOptions windowOptions = const WindowOptions(
-    size: Size(1280, 800),
-    minimumSize: Size(900, 600),
-    center: true,
-    backgroundColor: Colors.transparent,
-    skipTaskbar: false,
-    titleBarStyle: TitleBarStyle.hidden,
-  );
+
+  final windowConfig = WindowConfigService();
+  final windowOptions = await windowConfig.getStoredWindowOptions();
 
   await windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowConfig.applyStoredPosition();
     await windowManager.show();
     await windowManager.focus();
+    
+    // Start listening for window changes
+    await windowConfig.init();
   });
 
   runApp(const ProviderScope(child: StockFlouApp()));
@@ -132,6 +134,10 @@ class _MainShellState extends ConsumerState<MainShell> {
                 // Меню настроек — только в разделе «Настройки»
                 if (currentIndex == NavigationTab.settings)
                   _buildSettingsSidebarBlock(context, colorScheme, ref),
+
+                // Меню загрузок — только в разделе «Uploads»
+                if (currentIndex == NavigationTab.uploads)
+                  _buildUploadsSidebarBlock(context, colorScheme, ref),
 
                 const Spacer(),
 
@@ -503,6 +509,176 @@ class _MainShellState extends ConsumerState<MainShell> {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+  Widget _buildUploadsSidebarBlock(
+    BuildContext context,
+    ColorScheme colorScheme,
+    WidgetRef ref,
+  ) {
+    final currentFilter = ref.watch(historyFilterProvider);
+    final activeStocks = ref.watch(activeStocksProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final blockBg = isDark
+        ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
+        : colorScheme.surfaceContainerLow;
+
+    Widget buildFilterItem(UploadFilter filter, IconData icon) {
+      final isSelected = currentFilter == filter;
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Material(
+          color: Colors.transparent,
+          child: SingleClickArea(
+            onTap: () {
+              ref.read(historyFilterProvider.notifier).setFilter(filter);
+            },
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? colorScheme.primary.withValues(alpha: 0.15)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      icon,
+                      size: 16,
+                      color: isSelected
+                          ? colorScheme.primary
+                          : colorScheme.onSurface.withValues(alpha: 0.7),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        filter.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight:
+                              isSelected ? FontWeight.w600 : FontWeight.w500,
+                          color: isSelected
+                              ? colorScheme.primary
+                              : colorScheme.onSurface.withValues(alpha: 0.8),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget buildStockToggle(String stockKey, String label) {
+      final isSelected = activeStocks.contains(stockKey);
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () {
+              ref.read(activeStocksProvider.notifier).toggle(stockKey);
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 6,
+              ),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: Checkbox(
+                      value: isSelected,
+                      onChanged: (_) {
+                        ref.read(activeStocksProvider.notifier).toggle(stockKey);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: colorScheme.onSurface.withValues(alpha: 0.9),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: blockBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: colorScheme.outline.withValues(alpha: 0.2),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Фильтры',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+              color: colorScheme.onSurface.withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(height: 10),
+          buildFilterItem(UploadFilter.all, Icons.list),
+          buildFilterItem(UploadFilter.uploading, Icons.upload),
+          buildFilterItem(UploadFilter.pending, Icons.hourglass_empty),
+          buildFilterItem(UploadFilter.success, Icons.check_circle_outline),
+          buildFilterItem(UploadFilter.error, Icons.error_outline),
+          const SizedBox(height: 12),
+          Divider(color: colorScheme.outline.withValues(alpha: 0.2)),
+          const SizedBox(height: 12),
+          Text(
+            'Активные стоки',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+              color: colorScheme.onSurface.withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(height: 10),
+          buildStockToggle('adobe', 'Adobe Stock'),
+          buildStockToggle('shutterstock', 'Shutterstock'),
         ],
       ),
     );

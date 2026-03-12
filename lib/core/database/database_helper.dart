@@ -26,7 +26,7 @@ class DatabaseHelper {
     return await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 5,
+        version: 6,
         onCreate: _createDB,
         onUpgrade: _upgradeDB,
       ),
@@ -47,7 +47,8 @@ CREATE TABLE files (
   editorial_country TEXT,
   editorial_date INTEGER,
   workflow_status TEXT NOT NULL DEFAULT 'new',
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  tags TEXT NOT NULL DEFAULT ''
 )
 ''');
     await db.execute(
@@ -118,6 +119,11 @@ CREATE TABLE IF NOT EXISTS upload_jobs (
         'CREATE INDEX IF NOT EXISTS idx_upload_jobs_file ON upload_jobs(file_id)',
       );
     }
+    if (oldVersion < 6) {
+      await db.execute(
+        "ALTER TABLE files ADD COLUMN tags TEXT NOT NULL DEFAULT ''",
+      );
+    }
   }
 
   Future<void> insertFile(AppFile file) async {
@@ -173,5 +179,14 @@ CREATE TABLE IF NOT EXISTS upload_jobs (
     final db = await instance.database;
     final result = await db.query('upload_jobs', orderBy: 'created_at DESC');
     return result.map((row) => UploadJob.fromMap(row)).toList();
+  }
+
+  Future<void> clearInactiveJobs() async {
+    final db = await instance.database;
+    await db.delete(
+      'upload_jobs',
+      where: 'status IN (?, ?, ?)',
+      whereArgs: ['success', 'cancelled', 'error'],
+    );
   }
 }

@@ -10,10 +10,14 @@ import 'package:macos_secure_bookmarks/macos_secure_bookmarks.dart';
 import 'package:pool/pool.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../../core/state/upload_queue_provider.dart';
+import '../../../models/upload_job.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/services/metadata_service.dart';
 import '../../../core/services/geocoding_service.dart';
+import '../../../core/services/csv_metadata_service.dart';
+import '../../../core/state/editorial_state_provider.dart';
 import '../../../core/state/files_provider.dart';
 import '../../../core/state/settings_provider.dart';
 import '../../../core/constants/app_constants.dart';
@@ -28,6 +32,8 @@ import 'widgets/generation_filter_bar.dart';
 import 'widgets/generation_top_bar.dart';
 import 'widgets/generation_tools_bar.dart';
 import 'widgets/generation_widgets.dart';
+import 'widgets/keywords_input_widget.dart';
+import 'widgets/csv_import_preview_dialog.dart';
 
 /// Mutex to ensure sequential dialog prompts from parallel queue tasks
 class _AsyncMutex {
@@ -57,7 +63,8 @@ class GenerationScreen extends ConsumerStatefulWidget {
   ConsumerState<GenerationScreen> createState() => _GenerationScreenState();
 }
 
-class _GenerationScreenState extends ConsumerState<GenerationScreen> {
+class _GenerationScreenState extends ConsumerState<GenerationScreen>
+    with WidgetsBindingObserver {
   final _apiClient = ApiClient();
 
   // Single selection for Inspector
@@ -73,25 +80,162 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
   bool _isLoading = false;
   int _batchTotal = 0;
   int _batchDone = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // Initial sync
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(filesProvider.notifier).syncWithDisk();
+      final settings = ref.read(settingsProvider).value;
+      if (settings != null && !_numKeywordsInitialized) {
+        setState(() {
+          _numKeywords = settings.defaultKeywordsCount;
+          _numKeywordsInitialized = true;
+        });
+      }
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      ref.read(filesProvider.notifier).syncWithDisk();
+      // Also potentially verify local files here
+      _syncLocalFiles();
+    }
+  }
+
+  void _syncLocalFiles() {
+    // Optional companion method to pruning new (un-added) files if they were deleted
+    setState(() {
+      _localFiles.retainWhere((f) => f.existsSync());
+      _selectedPaths.retainWhere((path) => File(path).existsSync());
+      if (_selectedLocalInspectorFile != null && !_selectedLocalInspectorFile!.existsSync()) {
+        _selectedLocalInspectorFile = null;
+      }
+    });
+  }
+
+  Future<void> _handleExportCsv() async {
+    final pathsToExport = _selectedPaths.isNotEmpty
+        ? _selectedPaths.toList()
+        : _localFiles.map((f) => f.path).toList();
+
+    if (pathsToExport.isEmpty) return;
+
+    final dbFiles = ref.read(filesProvider).value ?? [];
+
+    // We export AppFile models. If a file is only local, create an empty AppFile for it.
+    final filesToExport = pathsToExport.map((path) {
+      final existing = dbFiles.firstWhereOrNull((dbf) => dbf.path == path);
+      if (existing != null) return existing;
+      return AppFile(
+        id: const Uuid().v4(),
+        path: path,
+        filename: path.split(Platform.pathSeparator).last,
+        workflowStatus: WorkflowStatus.newFile,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+      );
+    }).toList();
+
+    const String fileName = 'metadata.csv';
+    final result = await getSaveLocation(suggestedName: fileName);
+
+    if (result == null) {
+      return; // User canceled
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      await CsvMetadataService.exportToFile(filesToExport, result.path);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('CSV сохранен: ${result.path}')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Ошибка экспорта: $e')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _handleImportCsv() async {
+    const typeGroup = XTypeGroup(label: 'CSV Files', extensions: ['csv']);
+    final file = await openFile(acceptedTypeGroups: [typeGroup]);
+
+    if (file == null) return; // User canceled
+
+    setState(() => _isLoading = true);
+    try {
+      final parsedData = await CsvMetadataService.importFromFile(file.path);
+
+      if (mounted) {
+        if (parsedData.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('CSV файл пуст или имеет неверный формат.'),
+            ),
+          );
+          return;
+        }
+
+        // We will pass this to the dialog to preview changes.
+        final performImport = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => CsvImportPreviewDialog(
+            parsedData: parsedData,
+            dbFiles: ref.read(filesProvider).value ?? [],
+          ),
+        );
+
+        if (performImport == true) {
+          // The dialog applies the changes and saves them; we just refresh
+          ref.invalidate(filesProvider);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Метаданные успешно импортированы!')),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Ошибка импорта CSV: $e')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
   bool _isDragging = false;
 
   // Options
-  final double _numKeywords = 15;
+  int _numKeywords = 15;
+  bool _numKeywordsInitialized = false;
   final _titleController = TextEditingController();
   final _keywordsController = TextEditingController();
+  final _descriptionController = TextEditingController();
   final _batchTitleController = TextEditingController();
   final _batchKeywordsController = TextEditingController();
+  final _contextController = TextEditingController();
 
   /// Есть несохранённые изменения метаданных у выбранного файла.
   bool _metadataDirty = false;
 
-  // Editorial
-  bool _isEditorial = false;
-  final _editorialCityController = TextEditingController();
-  final _editorialCountryController = TextEditingController();
-  final _cityFocusNode = FocusNode();
-  final _countryFocusNode = FocusNode();
-  DateTime? _editorialDate;
 
   /// Последний индекс для shift-click выделения
   int? _lastSelectedIndex;
@@ -102,6 +246,9 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
 
   /// 'all' | 'images' | 'videos'
   String _filterType = 'all';
+
+  /// Active tag filters (OR logic — file must have at least one matching tag).
+  Set<String> _activeTagFilters = {};
 
   bool _isVideoPath(String path) => AppConstants.isVideo(path);
 
@@ -138,6 +285,15 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       }).toList();
     }
 
+    // Tag filter (OR logic: show files with ANY of the active tags).
+    // Local files have no tags → hidden when tag filter is active.
+    if (_activeTagFilters.isNotEmpty) {
+      filteredLocals = [];
+      filteredDb = filteredDb.where((f) {
+        return f.tags.any((t) => _activeTagFilters.contains(t));
+      }).toList();
+    }
+
     return (locals: filteredLocals, db: filteredDb);
   }
 
@@ -146,16 +302,14 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _releaseSecurityScopedResource();
     _titleController.dispose();
     _keywordsController.dispose();
     _batchTitleController.dispose();
     _batchKeywordsController.dispose();
+    _contextController.dispose();
     _searchController.dispose();
-    _editorialCityController.dispose();
-    _editorialCountryController.dispose();
-    _cityFocusNode.dispose();
-    _countryFocusNode.dispose();
     super.dispose();
   }
 
@@ -390,10 +544,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       return;
     }
 
-    if (directoryPath == null) {
-      // User cancelled
-      return;
-    }
+    if (directoryPath == null) return;
 
     await ref.read(workspacesProvider.notifier).addWorkspace(directoryPath);
 
@@ -508,25 +659,15 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         _selectedLocalInspectorFile = null;
         _titleController.text = existing.metadataTitle ?? '';
         _keywordsController.text = existing.metadataKeywords ?? '';
-        _isEditorial = existing.isEditorial;
+        _descriptionController.text = existing.metadataDescription ?? '';
         _metadataDirty = false;
+        // Sync editorial state via provider
+        ref.read(editorialStateProvider.notifier).syncFromFile(existing);
       } else if (local != null) {
         _selectedLocalInspectorFile = local;
         _selectedExistingFile = null;
-        _isEditorial = false;
+        ref.read(editorialStateProvider.notifier).reset();
         _clearResults();
-      }
-      // Загружаем editorial поля
-      if (existing != null) {
-        _editorialCityController.text = existing.editorialCity ?? '';
-        _editorialCountryController.text = existing.editorialCountry ?? '';
-        _editorialDate = existing.editorialDate != null
-            ? DateTime.fromMillisecondsSinceEpoch(existing.editorialDate!)
-            : null;
-      } else {
-        _editorialCityController.clear();
-        _editorialCountryController.clear();
-        _editorialDate = null;
       }
 
       // Если переходим в режим множественного выбора, очищаем батч-контроллеры
@@ -581,9 +722,41 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
     setState(() => _isLoading = true);
 
     try {
+      final editorial = ref.read(editorialStateProvider);
+      final editorialNotifier = ref.read(editorialStateProvider.notifier);
+      final userContext = _contextController.text.trim();
+      String? fullContext = userContext.isNotEmpty ? userContext : null;
+
+      if (editorial.isEditorial) {
+        // Load EXIF if not already loaded
+        if (editorial.date == null ||
+            (editorial.city.isEmpty && editorial.country.isEmpty)) {
+          final exif = await MetadataService.readExifLocationAndDate(
+            fileToProcess.path,
+          );
+          if (exif.date != null && editorial.date == null) {
+            editorialNotifier.setDate(exif.date);
+          }
+          if (exif.lat != null &&
+              exif.lon != null &&
+              editorial.city.isEmpty) {
+            final geo = await GeocodingService.resolve(exif.lat, exif.lon);
+            if (geo.city != null) editorialNotifier.setCity(geo.city!);
+            if (geo.country != null || geo.state != null) {
+              editorialNotifier.setCountry(geo.country ?? geo.state ?? '');
+            }
+          }
+        }
+      }
+
+      if (fullContext != null && fullContext.length > 150) {
+        fullContext = '${fullContext.substring(0, 147)}...';
+      }
+
       final options = GenerationOptions(
-        numberOfKeywords: _numKeywords.toInt(),
+        numberOfKeywords: _numKeywords,
         shortTitle: false,
+        contextAndInstructions: fullContext,
       );
 
       final metadata = await _apiClient.generateMetadata(
@@ -595,58 +768,60 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
       final fetchedTitle = metadata['title'] ?? '';
       final List<dynamic> fetchedKeywords = metadata['keywords'] ?? [];
       final keywordsString = fetchedKeywords.join(', ');
+      final fetchedDescription = (metadata['description'] ?? '') as String;
 
-      // Если editorial — формируем prefix из EXIF и geocoding
+      final editorialForSave = ref.read(editorialStateProvider);
       String finalTitle = fetchedTitle;
-      if (_isEditorial) {
-        // Загружаем EXIF если ещё не загружены
-        if (_editorialDate == null ||
-            (_editorialCityController.text.isEmpty &&
-                _editorialCountryController.text.isEmpty)) {
-          final exif = await MetadataService.readExifLocationAndDate(
-            fileToProcess.path,
-          );
-          if (exif.date != null && _editorialDate == null) {
-            _editorialDate = exif.date;
-          }
-          if (exif.lat != null &&
-              exif.lon != null &&
-              _editorialCityController.text.isEmpty) {
-            final geo = await GeocodingService.resolve(exif.lat, exif.lon);
-            if (geo.city != null) _editorialCityController.text = geo.city!;
-            if (geo.country != null || geo.state != null) {
-              _editorialCountryController.text = geo.state ?? geo.country ?? '';
-            }
-          }
-        }
-        final prefix = _formatEditorialPrefix();
-        if (prefix.isNotEmpty) {
-          finalTitle = '$prefix: $fetchedTitle';
-        }
+      
+      if (editorialForSave.isEditorial) {
+        finalTitle = _appendEditorialToTitle(
+          title: fetchedTitle,
+          city: editorialForSave.city,
+          country: editorialForSave.country,
+          date: editorialForSave.date,
+        );
       }
 
       setState(() {
         _titleController.text = finalTitle;
         _keywordsController.text = keywordsString;
+        _descriptionController.text = fetchedDescription;
         _metadataDirty = true;
       });
 
       // Save to DB
       final newFileId = _selectedExistingFile?.id ?? const Uuid().v4();
+      
+      // Build the tags list: always add AI, add editorial if mode is on
+      final updatedTags = List<String>.from(_selectedExistingFile?.tags ?? []);
+      if (!updatedTags.contains(AppTags.aiGenerated)) {
+        updatedTags.add(AppTags.aiGenerated);
+      }
+      if (editorialForSave.isEditorial && !updatedTags.contains(AppTags.editorial)) {
+        updatedTags.add(AppTags.editorial);
+      }
+      if (!editorialForSave.isEditorial) {
+        updatedTags.remove(AppTags.editorial);
+      }
+
       final newFile = AppFile(
         id: newFileId,
         path: fileToProcess.path,
         filename: fileToProcess.path.split(Platform.pathSeparator).last,
         metadataTitle: finalTitle,
         metadataKeywords: keywordsString,
-        isEditorial: _isEditorial,
-        editorialCity: _editorialCityController.text,
-        editorialCountry: _editorialCountryController.text,
-        editorialDate: _editorialDate?.millisecondsSinceEpoch,
+        metadataDescription: fetchedDescription.isEmpty
+            ? null
+            : fetchedDescription,
+        isEditorial: editorialForSave.isEditorial,
+        editorialCity: editorialForSave.city,
+        editorialCountry: editorialForSave.country,
+        editorialDate: editorialForSave.date?.millisecondsSinceEpoch,
         workflowStatus: WorkflowStatus.readyToUpload,
         createdAt:
             _selectedExistingFile?.createdAt ??
             DateTime.now().millisecondsSinceEpoch,
+        tags: updatedTags,
       );
 
       await ref.read(filesProvider.notifier).addFile(newFile);
@@ -765,9 +940,40 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
               return; // Skip this file
             }
 
+            // Build contextAndInstructions from user context + editorial info
+            final userContext = _contextController.text.trim();
+            String? fullContext = userContext.isNotEmpty ? userContext : null;
+            String? batchCity;
+            String? batchCountry;
+            ({double? lat, double? lon, DateTime? date, bool hasAudio})?
+            batchExif;
+            final editorialForSave = ref.read(editorialStateProvider);
+            if (editorialForSave.isEditorial) {
+              batchExif = await MetadataService.readExifLocationAndDate(path);
+              String localCity = '';
+              String localCountry = '';
+
+              if (batchExif.lat != null && batchExif.lon != null) {
+                final geo = await GeocodingService.resolve(
+                  batchExif.lat,
+                  batchExif.lon,
+                );
+                localCity = geo.city ?? '';
+                localCountry = geo.country ?? geo.state ?? '';
+              }
+
+              batchCity = localCity;
+              batchCountry = localCountry;
+            }
+
+            if (fullContext != null && fullContext.length > 150) {
+              fullContext = '${fullContext.substring(0, 147)}...';
+            }
+
             final options = GenerationOptions(
-              numberOfKeywords: _numKeywords.toInt(),
+              numberOfKeywords: _numKeywords,
               shortTitle: false,
+              contextAndInstructions: fullContext,
             );
 
             final metadata = await _apiClient.generateMetadata(
@@ -779,52 +985,45 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
             final fetchedTitle = metadata['title'] ?? '';
             final List<dynamic> fetchedKeywords = metadata['keywords'] ?? [];
             final keywordsString = fetchedKeywords.join(', ');
+            final fetchedDescription =
+                (metadata['description'] ?? '') as String;
 
-            // Если включён Эдиториал, формируем префикс индивидуально для каждого файла
             String finalTitle = fetchedTitle;
-            String? batchCity;
-            String? batchCountry;
-            ({double? lat, double? lon, DateTime? date, bool hasAudio})?
-            batchExif;
-
-            if (_isEditorial) {
-              batchExif = await MetadataService.readExifLocationAndDate(path);
-              String localCity = '';
-              String localCountry = '';
-
-              if (batchExif.lat != null && batchExif.lon != null) {
-                final geo = await GeocodingService.resolve(
-                  batchExif.lat,
-                  batchExif.lon,
-                );
-                localCity = geo.city ?? '';
-                localCountry = geo.state ?? geo.country ?? '';
-              }
-
-              batchCity = localCity;
-              batchCountry = localCountry;
-
-              final prefix = _buildEditorialPrefix(
-                city: localCity,
-                country: localCountry,
-                date: batchExif.date,
+            if (editorialForSave.isEditorial) {
+              finalTitle = _appendEditorialToTitle(
+                title: fetchedTitle,
+                city: batchCity ?? '',
+                country: batchCountry ?? '',
+                date: batchExif?.date,
               );
-              if (prefix.isNotEmpty) {
-                finalTitle = '$prefix: $fetchedTitle';
-              }
             }
 
-            // Save/Update DB
+            // Save/Update DB — auto-tag with AI and optional editorial
             final existing = fileObj is AppFile ? fileObj : null;
+            final baseTags = List<String>.from(existing?.tags ?? []);
+            if (!baseTags.contains(AppTags.aiGenerated)) {
+              baseTags.add(AppTags.aiGenerated);
+            }
+            if (editorialForSave.isEditorial && !baseTags.contains(AppTags.editorial)) {
+              baseTags.add(AppTags.editorial);
+            }
+            if (!editorialForSave.isEditorial) {
+              baseTags.remove(AppTags.editorial);
+            }
+
             final newFile = existing != null
                 ? existing.copyWith(
                     metadataTitle: finalTitle,
                     metadataKeywords: keywordsString,
-                    isEditorial: _isEditorial,
+                    metadataDescription: fetchedDescription.isEmpty
+                        ? null
+                        : fetchedDescription,
+                    isEditorial: editorialForSave.isEditorial,
                     editorialCity: batchCity,
                     editorialCountry: batchCountry,
                     editorialDate: batchExif?.date?.millisecondsSinceEpoch,
                     workflowStatus: WorkflowStatus.readyToUpload,
+                    tags: baseTags,
                   )
                 : AppFile(
                     id: const Uuid().v4(),
@@ -832,12 +1031,16 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                     filename: path.split(Platform.pathSeparator).last,
                     metadataTitle: finalTitle,
                     metadataKeywords: keywordsString,
-                    isEditorial: _isEditorial,
+                    metadataDescription: fetchedDescription.isEmpty
+                        ? null
+                        : fetchedDescription,
+                    isEditorial: editorialForSave.isEditorial,
                     editorialCity: batchCity,
                     editorialCountry: batchCountry,
                     editorialDate: batchExif?.date?.millisecondsSinceEpoch,
                     workflowStatus: WorkflowStatus.readyToUpload,
                     createdAt: DateTime.now().millisecondsSinceEpoch,
+                    tags: baseTags,
                   );
 
             await ref.read(filesProvider.notifier).addFile(newFile);
@@ -859,6 +1062,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                   // Обновляем UI поля инспектора на основе данных последнего обработанного файла
                   _titleController.text = finalTitle;
                   _keywordsController.text = keywordsString;
+                  _descriptionController.text = fetchedDescription;
                   _selectedExistingFile = newFile;
                   _selectedLocalInspectorFile = null;
                   _metadataDirty = true;
@@ -887,12 +1091,14 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
   Future<void> _saveChanges() async {
     final title = _titleController.text.trim();
     final keywords = _keywordsController.text.trim();
+    final description = _descriptionController.text.trim();
     final batchTitle = _batchTitleController.text.trim();
     final batchKeywords = _batchKeywordsController.text.trim();
 
     if (_selectedPaths.length > 1) {
       int savedCount = 0;
       final dbFiles = ref.read(filesProvider).value ?? [];
+      final editorialForSave = ref.read(editorialStateProvider);
 
       setState(() => _isLoading = true);
       try {
@@ -901,37 +1107,61 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
 
           AppFile newFile;
           if (existing != null) {
+            String finalTitle = batchTitle.isNotEmpty
+                ? batchTitle
+                : (existing.metadataTitle ?? '');
+            if (editorialForSave.isEditorial && finalTitle.isNotEmpty) {
+              finalTitle = _appendEditorialToTitle(
+                title: finalTitle,
+                city: editorialForSave.city.isNotEmpty ? editorialForSave.city : (existing.editorialCity ?? ''),
+                country: editorialForSave.country.isNotEmpty ? editorialForSave.country : (existing.editorialCountry ?? ''),
+                date: editorialForSave.date ?? (existing.editorialDate != null ? DateTime.fromMillisecondsSinceEpoch(existing.editorialDate!) : null),
+              );
+            }
+
             newFile = existing.copyWith(
-              metadataTitle: batchTitle.isNotEmpty
-                  ? batchTitle
-                  : existing.metadataTitle,
+              metadataTitle: finalTitle.isNotEmpty ? finalTitle : null,
               metadataKeywords: batchKeywords.isNotEmpty
                   ? batchKeywords
                   : existing.metadataKeywords,
-              isEditorial: _isEditorial,
-              editorialCity: _editorialCityController.text.isNotEmpty
-                  ? _editorialCityController.text
+              metadataDescription: description.isNotEmpty
+                  ? description
+                  : existing.metadataDescription,
+              isEditorial: editorialForSave.isEditorial,
+              editorialCity: editorialForSave.city.isNotEmpty
+                  ? editorialForSave.city
                   : existing.editorialCity,
-              editorialCountry: _editorialCountryController.text.isNotEmpty
-                  ? _editorialCountryController.text
+              editorialCountry: editorialForSave.country.isNotEmpty
+                  ? editorialForSave.country
                   : existing.editorialCountry,
               editorialDate:
-                  _editorialDate?.millisecondsSinceEpoch ??
+                  editorialForSave.date?.millisecondsSinceEpoch ??
                   existing.editorialDate,
               workflowStatus: WorkflowStatus.readyToUpload,
             );
             await ref.read(filesProvider.notifier).updateFile(newFile);
           } else {
+            String finalTitle = batchTitle;
+            if (editorialForSave.isEditorial && finalTitle.isNotEmpty) {
+              finalTitle = _appendEditorialToTitle(
+                title: finalTitle,
+                city: editorialForSave.city,
+                country: editorialForSave.country,
+                date: editorialForSave.date,
+              );
+            }
+
             newFile = AppFile(
               id: const Uuid().v4(),
               path: path,
               filename: path.split(Platform.pathSeparator).last,
-              metadataTitle: batchTitle,
+              metadataTitle: finalTitle,
               metadataKeywords: batchKeywords,
-              isEditorial: _isEditorial,
-              editorialCity: _editorialCityController.text,
-              editorialCountry: _editorialCountryController.text,
-              editorialDate: _editorialDate?.millisecondsSinceEpoch,
+              metadataDescription: description.isNotEmpty ? description : null,
+              isEditorial: editorialForSave.isEditorial,
+              editorialCity: editorialForSave.city,
+              editorialCountry: editorialForSave.country,
+              editorialDate: editorialForSave.date?.millisecondsSinceEpoch,
               workflowStatus: WorkflowStatus.readyToUpload,
               createdAt: DateTime.now().millisecondsSinceEpoch,
             );
@@ -943,6 +1173,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
               filePath: path,
               title: newFile.metadataTitle ?? '',
               keywords: newFile.metadataKeywords ?? '',
+              description: newFile.metadataDescription,
             );
           }
           savedCount++;
@@ -960,13 +1191,25 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         if (mounted) setState(() => _isLoading = false);
       }
     } else if (_selectedExistingFile != null) {
+      final editorialForSave = ref.read(editorialStateProvider);
+      String finalTitle = title;
+      if (editorialForSave.isEditorial && finalTitle.isNotEmpty) {
+        finalTitle = _appendEditorialToTitle(
+          title: finalTitle,
+          city: editorialForSave.city,
+          country: editorialForSave.country,
+          date: editorialForSave.date,
+        );
+      }
+
       final updatedFile = _selectedExistingFile!.copyWith(
-        metadataTitle: title,
+        metadataTitle: finalTitle,
         metadataKeywords: keywords,
-        isEditorial: _isEditorial,
-        editorialCity: _editorialCityController.text,
-        editorialCountry: _editorialCountryController.text,
-        editorialDate: _editorialDate?.millisecondsSinceEpoch,
+        metadataDescription: description.isNotEmpty ? description : null,
+        isEditorial: editorialForSave.isEditorial,
+        editorialCity: editorialForSave.city,
+        editorialCountry: editorialForSave.country,
+        editorialDate: editorialForSave.date?.millisecondsSinceEpoch,
         workflowStatus: WorkflowStatus.readyToUpload,
       );
       await ref.read(filesProvider.notifier).updateFile(updatedFile);
@@ -977,6 +1220,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
           filePath: updatedFile.path,
           title: title,
           keywords: keywords,
+          description: description,
         );
       }
 
@@ -988,18 +1232,29 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         _showSuccess('Изменения сохранены в БД и в файл.');
       }
     } else if (_selectedLocalInspectorFile != null) {
+      final editorialForSave = ref.read(editorialStateProvider);
+      String finalTitle = title;
+      if (editorialForSave.isEditorial && finalTitle.isNotEmpty) {
+        finalTitle = _appendEditorialToTitle(
+          title: finalTitle,
+          city: editorialForSave.city,
+          country: editorialForSave.country,
+          date: editorialForSave.date,
+        );
+      }
+
       final newFile = AppFile(
         id: const Uuid().v4(),
         path: _selectedLocalInspectorFile!.path,
         filename: _selectedLocalInspectorFile!.path
             .split(Platform.pathSeparator)
             .last,
-        metadataTitle: title,
+        metadataTitle: finalTitle,
         metadataKeywords: keywords,
-        isEditorial: _isEditorial,
-        editorialCity: _editorialCityController.text,
-        editorialCountry: _editorialCountryController.text,
-        editorialDate: _editorialDate?.millisecondsSinceEpoch,
+        isEditorial: editorialForSave.isEditorial,
+        editorialCity: editorialForSave.city,
+        editorialCountry: editorialForSave.country,
+        editorialDate: editorialForSave.date?.millisecondsSinceEpoch,
         workflowStatus: WorkflowStatus.readyToUpload,
         createdAt: DateTime.now().millisecondsSinceEpoch,
       );
@@ -1011,6 +1266,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
           filePath: newFile.path,
           title: title,
           keywords: keywords,
+          description: description,
         );
       }
 
@@ -1065,6 +1321,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         filePath: f.path,
         title: f.metadataTitle?.trim() ?? '',
         keywords: f.metadataKeywords?.trim() ?? '',
+        description: f.metadataDescription?.trim(),
       );
       if (ok) saved++;
     }
@@ -1104,24 +1361,51 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         const SizedBox(height: 12),
         LayoutBuilder(
           builder: (context, constraints) {
-            const crossAxisCount = 5;
+            const maxCols = 5;
             const spacing = 6.0;
-            const maxVisible = crossAxisCount * crossAxisCount;
+            const maxVisible = maxCols * maxCols;
 
-            final size =
-                (constraints.maxWidth - spacing * (crossAxisCount - 1)) /
-                crossAxisCount;
+            // Fixed panel width = available width
+            final panelWidth = constraints.maxWidth;
 
+            // The maximum cell size when the grid is full (5×5)
+            final maxCellSize =
+                (panelWidth - spacing * (maxCols - 1)) / maxCols;
+
+            // Fixed container height = always the same as a full 5-row grid
+            final fixedHeight = maxCellSize * maxCols + spacing * (maxCols - 1);
+
+            // Determine how many cells to show
             final isOverflow = paths.length > maxVisible;
-            final limit = isOverflow ? maxVisible - 1 : paths.length;
+            final displayCount = isOverflow ? maxVisible : paths.length;
 
+            // Calculate columns so thumbnails fill the fixed width/height
+            // Use the smallest grid that fits all images: ceil(sqrt(count))
+            final cols = displayCount <= 1
+                ? 1
+                : (displayCount <= 4
+                      ? 2
+                      : (displayCount <= 9
+                            ? 3
+                            : (displayCount <= 16 ? 4 : maxCols)));
+
+            final rows = (displayCount / cols).ceil().clamp(1, maxCols);
+
+            // Cell size derived from whichever axis is more constrained
+            final cellByWidth = (panelWidth - spacing * (cols - 1)) / cols;
+            final cellByHeight = (fixedHeight - spacing * (rows - 1)) / rows;
+            final cellSize = cellByWidth < cellByHeight
+                ? cellByWidth
+                : cellByHeight;
+
+            final limit = isOverflow ? maxVisible - 1 : paths.length;
             final children = <Widget>[];
 
             for (var i = 0; i < limit; i++) {
               children.add(
                 SizedBox(
-                  width: size,
-                  height: size,
+                  width: cellSize,
+                  height: cellSize,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(6),
                     child: _thumbnailForPath(context, paths[i]),
@@ -1134,8 +1418,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
               final remaining = paths.length - limit;
               children.add(
                 SizedBox(
-                  width: size,
-                  height: size,
+                  width: cellSize,
+                  height: cellSize,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(6),
                     child: Stack(
@@ -1143,9 +1427,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                       children: [
                         _thumbnailForPath(context, paths[limit]),
                         Container(
-                          color: Colors.black.withAlpha(
-                            150,
-                          ), // Semi-transparent black overlay
+                          color: Colors.black.withAlpha(150),
                           alignment: Alignment.center,
                           child: Text(
                             '+$remaining',
@@ -1163,18 +1445,33 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
               );
             }
 
-            return Wrap(
-              spacing: spacing,
-              runSpacing: spacing,
-              children: children,
+            return SizedBox(
+              height: fixedHeight,
+              child: Wrap(
+                spacing: spacing,
+                runSpacing: spacing,
+                children: children,
+              ),
             );
           },
         ),
+        const SizedBox(height: 4),
         GenerationEditorialSection(
           isMulti: true,
           selectedPaths: _selectedPaths,
           selectedExistingFile: _selectedExistingFile,
           selectedLocalInspectorPath: _selectedLocalInspectorFile?.path,
+        ),
+        const SizedBox(height: 12),
+        const GenerationFormLabel('КОНТЕКСТ'),
+        const SizedBox(height: 6),
+        TextField(
+          controller: _contextController,
+          maxLines: 2,
+          decoration: _inputDecoration(context).copyWith(
+            hintText: 'Доп. контекст для AI (бренды, событие и т.д.)',
+          ),
+          style: const TextStyle(fontSize: 13, height: 1.4),
         ),
         const SizedBox(height: 16),
         const Divider(),
@@ -1190,15 +1487,21 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
           onChanged: (_) => setState(() => _metadataDirty = true),
         ),
         const SizedBox(height: 16),
-        const GenerationFormLabel(
-          'BATCH KEYWORDS (оставьте пустым для сохранения текущего)',
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _keywordsController,
+          builder: (context, value, child) {
+            final count = value.text
+                .split(',')
+                .where((e) => e.trim().isNotEmpty)
+                .length;
+            return GenerationFormLabel(
+              'BATCH KEYWORDS ($count) (оставьте пустым для сохранения текущего)',
+            );
+          },
         ),
         const SizedBox(height: 6),
-        TextField(
+        KeywordsInputWidget(
           controller: _keywordsController,
-          maxLines: 4,
-          decoration: _inputDecoration(context),
-          style: const TextStyle(fontSize: 14, height: 1.5),
           onChanged: (_) => setState(() => _metadataDirty = true),
         ),
         if (_isLoading)
@@ -1269,36 +1572,41 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
     return '${_months[date.month - 1]} ${date.day} ${date.year}';
   }
 
-  /// Builds an editorial prefix: "CITY, COUNTRY - MONTH DAY YEAR"
-  /// Can be called with explicit values (batch) or from form controllers.
-  String _buildEditorialPrefix({
+  /// Appends location and date to the end of the title
+  /// following Adobe Stock editorial guidelines.
+  String _appendEditorialToTitle({
+    required String title,
     required String city,
     required String country,
     required DateTime? date,
   }) {
-    final datePart = date != null ? _formatEditorialDate(date) : '';
+    var newTitle = title.trim();
+    if (newTitle.endsWith('.')) {
+      // Remove trailing period to append properly
+      newTitle = newTitle.substring(0, newTitle.length - 1);
+    }
+
     final locationParts = <String>[];
     if (city.isNotEmpty) locationParts.add(city);
     if (country.isNotEmpty) locationParts.add(country);
-    final location = locationParts.join(', ');
 
-    if (location.isNotEmpty && datePart.isNotEmpty) {
-      return '$location - $datePart';
-    } else if (location.isNotEmpty) {
-      return location;
-    } else if (datePart.isNotEmpty) {
-      return datePart;
+    String suffix = '';
+    if (locationParts.isNotEmpty) {
+      // e.g. " in Everett, Washington" or " - Everett, Washington"
+      suffix += ' - ${locationParts.join(', ')}';
     }
-    return '';
-  }
+    if (date != null) {
+      suffix += '. ${_formatEditorialDate(date)}';
+    }
 
-  /// Формирует editorial prefix из текущих контроллеров формы.
-  String _formatEditorialPrefix() {
-    return _buildEditorialPrefix(
-      city: _editorialCityController.text.trim(),
-      country: _editorialCountryController.text.trim(),
-      date: _editorialDate,
-    );
+    if (suffix.isNotEmpty) {
+      if (newTitle.endsWith(suffix)) {
+        return '$newTitle.';
+      }
+      return '$newTitle$suffix.';
+    }
+    
+    return newTitle.isEmpty ? '' : '$newTitle.';
   }
 
   Future<({bool replace, bool applyToAll})?> _showRegenerateDialog(
@@ -1398,6 +1706,14 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
     final colorScheme = Theme.of(context).colorScheme;
     final currentPath = ref.watch(workspacesProvider).currentPath;
 
+    if (!_numKeywordsInitialized) {
+      final settings = ref.read(settingsProvider).value;
+      if (settings != null) {
+        _numKeywords = settings.defaultKeywordsCount;
+        _numKeywordsInitialized = true;
+      }
+    }
+
     ref.listen(workspacesProvider, (prev, next) {
       if (prev?.currentPath != next.currentPath) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1415,6 +1731,23 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
         WidgetsBinding.instance.addPostFrameCallback(
           (_) => _refreshCurrentWorkspace(),
         );
+      }
+    });
+
+    ref.listen(filesProvider, (prev, next) {
+      final dbFiles = next.value ?? [];
+      if (_selectedExistingFile != null) {
+        final updatedFile = dbFiles.firstWhereOrNull(
+            (f) => f.id == _selectedExistingFile!.id);
+        if (updatedFile != null && updatedFile != _selectedExistingFile) {
+          setState(() {
+            _selectedExistingFile = updatedFile;
+            // Also sync the provider if it's the single selected file in the inspector
+            if (_selectedPaths.length == 1) {
+              ref.read(editorialStateProvider.notifier).syncFromFile(updatedFile);
+            }
+          });
+        }
       }
     });
 
@@ -1446,6 +1779,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                     focusedPath:
                         _selectedExistingFile?.path ??
                         _selectedLocalInspectorFile?.path,
+                    onExportCsv: _handleExportCsv,
+                    onImportCsv: _handleImportCsv,
                     onSelectAll: () {
                       final wp = ref.read(workspacesProvider).currentPath;
                       final sep = Platform.pathSeparator;
@@ -1471,10 +1806,13 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                     searchController: _searchController,
                     searchQuery: _searchQuery,
                     filterType: _filterType,
+                    activeTagFilters: _activeTagFilters,
                     onSearchChanged: (value) =>
                         setState(() => _searchQuery = value),
                     onFilterChanged: (value) =>
                         setState(() => _filterType = value),
+                    onTagFiltersChanged: (updated) =>
+                        setState(() => _activeTagFilters = updated),
                   ),
                   // Grid Area
                   Expanded(
@@ -1663,6 +2001,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                                     String path,
                                     String filename,
                                     bool isTagged,
+                                    List<String> tags,
                                     AppFile? existing,
                                     File? local,
                                   })
@@ -1676,6 +2015,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                                         .split(Platform.pathSeparator)
                                         .last,
                                     isTagged: false,
+                                    tags: const [],
                                     existing: null,
                                     local: f,
                                   ));
@@ -1687,6 +2027,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                                     isTagged:
                                         f.metadataKeywords != null &&
                                         f.metadataKeywords!.isNotEmpty,
+                                    tags: f.tags,
                                     existing: f,
                                     local: null,
                                   ));
@@ -1718,6 +2059,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                                       imagePath: item.path,
                                       filename: item.filename,
                                       isTagged: item.isTagged,
+                                      tags: item.tags,
                                       isSelected: _selectedPaths.contains(
                                         item.path,
                                       ),
@@ -1956,6 +2298,17 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                                 selectedLocalInspectorPath:
                                     _selectedLocalInspectorFile?.path,
                               ),
+                              const GenerationFormLabel('КОНТЕКСТ'),
+                              const SizedBox(height: 6),
+                              TextField(
+                                controller: _contextController,
+                                maxLines: 2,
+                                decoration: _inputDecoration(context).copyWith(
+                                  hintText: 'Доп. контекст для AI (бренды, событие и т.д.)',
+                                ),
+                                style: const TextStyle(fontSize: 13, height: 1.4),
+                              ),
+                              const SizedBox(height: 16),
 
                               // Metadata Form
                               const GenerationFormLabel('TITLE'),
@@ -1969,7 +2322,31 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                               ),
 
                               const SizedBox(height: 16),
-                              GenerationFormLabel('KEYWORDS'),
+                              const GenerationFormLabel('DESCRIPTION'),
+                              const SizedBox(height: 6),
+                              TextField(
+                                controller: _descriptionController,
+                                maxLines: 3,
+                                decoration: _inputDecoration(context),
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  height: 1.5,
+                                ),
+                                onChanged: (_) =>
+                                    setState(() => _metadataDirty = true),
+                              ),
+
+                              const SizedBox(height: 16),
+                              ValueListenableBuilder<TextEditingValue>(
+                                valueListenable: _keywordsController,
+                                builder: (context, value, child) {
+                                  final count = value.text
+                                      .split(',')
+                                      .where((e) => e.trim().isNotEmpty)
+                                      .length;
+                                  return GenerationFormLabel('КЛЮЧЕВЫЕ СЛОВА ($count)');
+                                },
+                              ),
                               const SizedBox(height: 6),
                               Row(
                                 children: [
@@ -1992,14 +2369,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                                 ],
                               ),
                               const SizedBox(height: 6),
-                              TextField(
+                              KeywordsInputWidget(
                                 controller: _keywordsController,
-                                maxLines: 4,
-                                decoration: _inputDecoration(context),
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  height: 1.5,
-                                ),
                                 onChanged: (_) =>
                                     setState(() => _metadataDirty = true),
                               ),
@@ -2016,18 +2387,57 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen> {
                               GenerationFormLabel('STOCK STATUS'),
                               const SizedBox(height: 12),
 
-                              GenerationStockStatusCard(
-                                code: 'AS',
-                                label: 'Adobe Stock',
-                                color: Colors.red,
-                                isUploaded: false,
-                              ),
-                              const SizedBox(height: 8),
-                              GenerationStockStatusCard(
-                                code: 'SS',
-                                label: 'Shutterstock',
-                                color: Colors.blue,
-                                isUploaded: true,
+                              Builder(
+                                builder: (context) {
+                                  final settings = ref.watch(settingsProvider).value;
+                                  final adobeCreds = settings?.adobeCredentials;
+                                  final shutterCreds = settings?.shutterstockCredentials;
+
+                                  final hasAdobe = adobeCreds != null && !adobeCreds.isEmpty;
+                                  final hasShutter = shutterCreds != null && !shutterCreds.isEmpty;
+
+                                  if (!hasAdobe && !hasShutter) {
+                                    return Text(
+                                      'Add stock credentials in Settings first.',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: colorScheme.onSurface.withValues(alpha: 0.6),
+                                      ),
+                                    );
+                                  }
+
+                                  // We look at the upload queue to see if there is any successful upload for this specific file
+                                  final queue = ref.watch(uploadQueueProvider).value ?? [];
+                                  final fileId = _selectedExistingFile?.id;
+                                  
+                                  bool isUploadedTo(String stockKey) {
+                                    if (fileId == null) return false;
+                                    return queue.any((j) => j.fileId == fileId && j.stockKey == stockKey && j.status == UploadJobStatus.success);
+                                  }
+
+                                  return Column(
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: [
+                                      if (hasAdobe) ...[
+                                        GenerationStockStatusCard(
+                                          code: 'AS',
+                                          label: 'Adobe Stock',
+                                          color: Colors.red,
+                                          isUploaded: isUploadedTo('adobe'),
+                                        ),
+                                        const SizedBox(height: 8),
+                                      ],
+                                      if (hasShutter) ...[
+                                        GenerationStockStatusCard(
+                                          code: 'SS',
+                                          label: 'Shutterstock',
+                                          color: Colors.blue,
+                                          isUploaded: isUploadedTo('shutterstock'),
+                                        ),
+                                      ],
+                                    ],
+                                  );
+                                },
                               ),
 
                               const SizedBox(height: 32),

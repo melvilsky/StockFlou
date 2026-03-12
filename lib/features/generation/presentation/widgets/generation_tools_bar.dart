@@ -19,6 +19,8 @@ class GenerationToolsBar extends ConsumerWidget {
   final VoidCallback onGenerateBatchAI;
   final VoidCallback onSaveAll;
   final VoidCallback onSaveChanges;
+  final VoidCallback onExportCsv;
+  final VoidCallback onImportCsv;
 
   const GenerationToolsBar({
     super.key,
@@ -31,6 +33,8 @@ class GenerationToolsBar extends ConsumerWidget {
     required this.onGenerateBatchAI,
     required this.onSaveAll,
     required this.onSaveChanges,
+    required this.onExportCsv,
+    required this.onImportCsv,
   });
 
   @override
@@ -156,6 +160,32 @@ class GenerationToolsBar extends ConsumerWidget {
                 foregroundColor: saveCount > 0
                     ? colorScheme.onPrimaryContainer
                     : null,
+              ),
+            ),
+          ),
+          const Spacer(),
+          // Import CSV
+          Tooltip(
+            message: 'Импорт метаданных из CSV',
+            child: SingleClickArea(
+              onTap: onImportCsv,
+              child: OutlinedButton.icon(
+                onPressed: () {},
+                icon: const Icon(Icons.upload_file, size: 18),
+                label: const Text('Import CSV'),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Export CSV
+          Tooltip(
+            message: 'Экспорт выделенных (или всех) файлов в CSV',
+            child: SingleClickArea(
+              onTap: onExportCsv,
+              child: OutlinedButton.icon(
+                onPressed: () {},
+                icon: const Icon(Icons.download, size: 18),
+                label: const Text('Export CSV'),
               ),
             ),
           ),
