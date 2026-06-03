@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -6,13 +8,15 @@ import '../../models/upload_job.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
+  static const _databaseFileName = 'stock_flow_state.db';
+  static const _legacyDatabaseFileName = 'stockflou_state.db';
   static Database? _database;
 
   DatabaseHelper._init();
 
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDB('stockflou_state.db');
+    _database = await _initDB(_databaseFileName);
     return _database!;
   }
 
@@ -21,6 +25,7 @@ class DatabaseHelper {
     var databaseFactory = databaseFactoryFfi;
 
     final appDocDir = await getApplicationSupportDirectory();
+    await _migrateLegacyDatabaseFile(appDocDir.path);
     final dbPath = join(appDocDir.path, filePath);
 
     return await databaseFactory.openDatabase(
@@ -31,6 +36,22 @@ class DatabaseHelper {
         onUpgrade: _upgradeDB,
       ),
     );
+  }
+
+  Future<void> _migrateLegacyDatabaseFile(String directoryPath) async {
+    final newDbPath = join(directoryPath, _databaseFileName);
+    final legacyDbPath = join(directoryPath, _legacyDatabaseFileName);
+
+    if (await File(newDbPath).exists() || !await File(legacyDbPath).exists()) {
+      return;
+    }
+
+    for (final suffix in ['', '-wal', '-shm']) {
+      final legacyFile = File('$legacyDbPath$suffix');
+      if (await legacyFile.exists()) {
+        await legacyFile.copy('$newDbPath$suffix');
+      }
+    }
   }
 
   Future _createDB(Database db, int version) async {

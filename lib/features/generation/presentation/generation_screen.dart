@@ -88,13 +88,6 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
     // Initial sync
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(filesProvider.notifier).syncWithDisk();
-      final settings = ref.read(settingsProvider).value;
-      if (settings != null && !_numKeywordsInitialized) {
-        setState(() {
-          _numKeywords = settings.defaultKeywordsCount;
-          _numKeywordsInitialized = true;
-        });
-      }
     });
   }
 
@@ -112,33 +105,36 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
     setState(() {
       _localFiles.retainWhere((f) => f.existsSync());
       _selectedPaths.retainWhere((path) => File(path).existsSync());
-      if (_selectedLocalInspectorFile != null && !_selectedLocalInspectorFile!.existsSync()) {
+      if (_selectedLocalInspectorFile != null &&
+          !_selectedLocalInspectorFile!.existsSync()) {
         _selectedLocalInspectorFile = null;
       }
     });
   }
 
   Future<void> _handleExportCsv() async {
-    final pathsToExport = _selectedPaths.isNotEmpty
-        ? _selectedPaths.toList()
-        : _localFiles.map((f) => f.path).toList();
+    final pathsToExport =
+        _selectedPaths.isNotEmpty
+            ? _selectedPaths.toList()
+            : _localFiles.map((f) => f.path).toList();
 
     if (pathsToExport.isEmpty) return;
 
     final dbFiles = ref.read(filesProvider).value ?? [];
 
     // We export AppFile models. If a file is only local, create an empty AppFile for it.
-    final filesToExport = pathsToExport.map((path) {
-      final existing = dbFiles.firstWhereOrNull((dbf) => dbf.path == path);
-      if (existing != null) return existing;
-      return AppFile(
-        id: const Uuid().v4(),
-        path: path,
-        filename: path.split(Platform.pathSeparator).last,
-        workflowStatus: WorkflowStatus.newFile,
-        createdAt: DateTime.now().millisecondsSinceEpoch,
-      );
-    }).toList();
+    final filesToExport =
+        pathsToExport.map((path) {
+          final existing = dbFiles.firstWhereOrNull((dbf) => dbf.path == path);
+          if (existing != null) return existing;
+          return AppFile(
+            id: const Uuid().v4(),
+            path: path,
+            filename: path.split(Platform.pathSeparator).last,
+            workflowStatus: WorkflowStatus.newFile,
+            createdAt: DateTime.now().millisecondsSinceEpoch,
+          );
+        }).toList();
 
     const String fileName = 'metadata.csv';
     final result = await getSaveLocation(suggestedName: fileName);
@@ -192,10 +188,11 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
         final performImport = await showDialog<bool>(
           context: context,
           barrierDismissible: false,
-          builder: (ctx) => CsvImportPreviewDialog(
-            parsedData: parsedData,
-            dbFiles: ref.read(filesProvider).value ?? [],
-          ),
+          builder:
+              (ctx) => CsvImportPreviewDialog(
+                parsedData: parsedData,
+                dbFiles: ref.read(filesProvider).value ?? [],
+              ),
         );
 
         if (performImport == true) {
@@ -203,7 +200,9 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
           ref.invalidate(filesProvider);
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Метаданные успешно импортированы!')),
+              const SnackBar(
+                content: Text('Метаданные успешно импортированы!'),
+              ),
             );
           }
         }
@@ -223,9 +222,6 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
 
   bool _isDragging = false;
 
-  // Options
-  int _numKeywords = 15;
-  bool _numKeywordsInitialized = false;
   final _titleController = TextEditingController();
   final _keywordsController = TextEditingController();
   final _descriptionController = TextEditingController();
@@ -235,7 +231,6 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
 
   /// Есть несохранённые изменения метаданных у выбранного файла.
   bool _metadataDirty = false;
-
 
   /// Последний индекс для shift-click выделения
   int? _lastSelectedIndex;
@@ -262,36 +257,38 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
 
     // Type filter
     if (_filterType == 'images') {
-      filteredLocals = filteredLocals
-          .where((f) => !_isVideoPath(f.path))
-          .toList();
+      filteredLocals =
+          filteredLocals.where((f) => !_isVideoPath(f.path)).toList();
       filteredDb = filteredDb.where((f) => !_isVideoPath(f.path)).toList();
     } else if (_filterType == 'videos') {
-      filteredLocals = filteredLocals
-          .where((f) => _isVideoPath(f.path))
-          .toList();
+      filteredLocals =
+          filteredLocals.where((f) => _isVideoPath(f.path)).toList();
       filteredDb = filteredDb.where((f) => _isVideoPath(f.path)).toList();
     }
 
     // Text search filter
     if (_searchQuery.isNotEmpty) {
       final q = _searchQuery.toLowerCase();
-      filteredLocals = filteredLocals.where((f) {
-        final name = f.path.split(Platform.pathSeparator).last.toLowerCase();
-        return name.contains(q);
-      }).toList();
-      filteredDb = filteredDb.where((f) {
-        return f.filename.toLowerCase().contains(q);
-      }).toList();
+      filteredLocals =
+          filteredLocals.where((f) {
+            final name =
+                f.path.split(Platform.pathSeparator).last.toLowerCase();
+            return name.contains(q);
+          }).toList();
+      filteredDb =
+          filteredDb.where((f) {
+            return f.filename.toLowerCase().contains(q);
+          }).toList();
     }
 
     // Tag filter (OR logic: show files with ANY of the active tags).
     // Local files have no tags → hidden when tag filter is active.
     if (_activeTagFilters.isNotEmpty) {
       filteredLocals = [];
-      filteredDb = filteredDb.where((f) {
-        return f.tags.any((t) => _activeTagFilters.contains(t));
-      }).toList();
+      filteredDb =
+          filteredDb.where((f) {
+            return f.tags.any((t) => _activeTagFilters.contains(t));
+          }).toList();
     }
 
     return (locals: filteredLocals, db: filteredDb);
@@ -366,17 +363,16 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
       ];
       final dbFiles = ref.read(filesProvider).value ?? [];
       final sep = Platform.pathSeparator;
-      final prefix = currentPath.endsWith(sep)
-          ? currentPath
-          : currentPath + sep;
-      final dbPathsInWorkspace = dbFiles
-          .where((f) => f.path == currentPath || f.path.startsWith(prefix))
-          .map((f) => f.path)
-          .toSet();
+      final prefix =
+          currentPath.endsWith(sep) ? currentPath : currentPath + sep;
+      final dbPathsInWorkspace =
+          dbFiles
+              .where((f) => f.path == currentPath || f.path.startsWith(prefix))
+              .map((f) => f.path)
+              .toSet();
 
-      final List<FileSystemEntity> entities = await dir
-          .list(recursive: false)
-          .toList();
+      final List<FileSystemEntity> entities =
+          await dir.list(recursive: false).toList();
       if (!mounted) return;
       final newLocal = <File>[];
       for (var entity in entities) {
@@ -448,8 +444,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
                 Text(
                   '1. Нажмите «Перейти в настройки» ниже.\n'
                   '2. Откроется «Конфиденциальность и безопасность» → «Полный доступ к диску».\n'
-                  '3. Если приложения Stock Flou нет в списке — нажмите «+» и выберите это приложение (stock_flou.app).\n'
-                  '4. Включите переключатель рядом с Stock Flou.\n'
+                  '3. Если приложения Stock Flow нет в списке — нажмите «+» и выберите это приложение (Stock Flow.app).\n'
+                  '4. Включите переключатель рядом с Stock Flow.\n'
                   '5. При необходимости перезапустите приложение.',
                   style: TextStyle(
                     fontSize: 13,
@@ -465,7 +461,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
                       try {
                         final exe = Platform.resolvedExecutable;
                         final parts = exe.split(Platform.pathSeparator);
-                        // .../stock_flou.app/Contents/MacOS/stock_flou -> show .../stock_flou.app
+                        // .../Stock Flow.app/Contents/MacOS/Stock Flow -> show .../Stock Flow.app
                         final appIdx = parts.indexWhere(
                           (e) => e.endsWith('.app'),
                         );
@@ -564,9 +560,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
 
     try {
       // Асинхронное чтение директории, чтобы не блокировать UI
-      final List<FileSystemEntity> entities = await dir
-          .list(recursive: false)
-          .toList();
+      final List<FileSystemEntity> entities =
+          await dir.list(recursive: false).toList();
 
       if (!mounted) return;
       setState(() {
@@ -604,14 +599,16 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
 
     final dbFiles = ref.read(filesProvider).value ?? [];
     final sep = Platform.pathSeparator;
-    final dbFilesInWorkspace = dbFiles.where((f) {
-      final p = f.path;
-      return p == workspacePath || p.startsWith(workspacePath + sep);
-    }).toList();
+    final dbFilesInWorkspace =
+        dbFiles.where((f) {
+          final p = f.path;
+          return p == workspacePath || p.startsWith(workspacePath + sep);
+        }).toList();
 
-    final currentLocalFiles = _localFiles
-        .where((lf) => !dbFilesInWorkspace.any((df) => df.path == lf.path))
-        .toList();
+    final currentLocalFiles =
+        _localFiles
+            .where((lf) => !dbFilesInWorkspace.any((df) => df.path == lf.path))
+            .toList();
 
     // Применяем фильтры — выделяем только видимые элементы
     final filtered = _applyFilters(currentLocalFiles, dbFilesInWorkspace);
@@ -737,9 +734,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
           if (exif.date != null && editorial.date == null) {
             editorialNotifier.setDate(exif.date);
           }
-          if (exif.lat != null &&
-              exif.lon != null &&
-              editorial.city.isEmpty) {
+          if (exif.lat != null && exif.lon != null && editorial.city.isEmpty) {
             final geo = await GeocodingService.resolve(exif.lat, exif.lon);
             if (geo.city != null) editorialNotifier.setCity(geo.city!);
             if (geo.country != null || geo.state != null) {
@@ -753,8 +748,10 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
         fullContext = '${fullContext.substring(0, 147)}...';
       }
 
+      final keywordCount = settings.defaultKeywordsCount;
+
       final options = GenerationOptions(
-        numberOfKeywords: _numKeywords,
+        numberOfKeywords: keywordCount,
         shortTitle: false,
         contextAndInstructions: fullContext,
       );
@@ -772,7 +769,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
 
       final editorialForSave = ref.read(editorialStateProvider);
       String finalTitle = fetchedTitle;
-      
+
       if (editorialForSave.isEditorial) {
         finalTitle = _appendEditorialToTitle(
           title: fetchedTitle,
@@ -791,13 +788,14 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
 
       // Save to DB
       final newFileId = _selectedExistingFile?.id ?? const Uuid().v4();
-      
+
       // Build the tags list: always add AI, add editorial if mode is on
       final updatedTags = List<String>.from(_selectedExistingFile?.tags ?? []);
       if (!updatedTags.contains(AppTags.aiGenerated)) {
         updatedTags.add(AppTags.aiGenerated);
       }
-      if (editorialForSave.isEditorial && !updatedTags.contains(AppTags.editorial)) {
+      if (editorialForSave.isEditorial &&
+          !updatedTags.contains(AppTags.editorial)) {
         updatedTags.add(AppTags.editorial);
       }
       if (!editorialForSave.isEditorial) {
@@ -810,9 +808,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
         filename: fileToProcess.path.split(Platform.pathSeparator).last,
         metadataTitle: finalTitle,
         metadataKeywords: keywordsString,
-        metadataDescription: fetchedDescription.isEmpty
-            ? null
-            : fetchedDescription,
+        metadataDescription:
+            fetchedDescription.isEmpty ? null : fetchedDescription,
         isEditorial: editorialForSave.isEditorial,
         editorialCity: editorialForSave.city,
         editorialCountry: editorialForSave.country,
@@ -860,11 +857,12 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
     }
 
     final dbFiles = ref.read(filesProvider).value ?? [];
-    final selectedFiles = _selectedPaths.map((path) {
-      final existing = dbFiles.firstWhereOrNull((f) => f.path == path);
-      if (existing != null) return existing;
-      return File(path);
-    }).toList();
+    final selectedFiles =
+        _selectedPaths.map((path) {
+          final existing = dbFiles.firstWhereOrNull((f) => f.path == path);
+          if (existing != null) return existing;
+          return File(path);
+        }).toList();
 
     setState(() {
       _isLoading = true;
@@ -884,9 +882,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
       tasks.add(
         pool.withResource(() async {
           try {
-            final path = fileObj is AppFile
-                ? fileObj.path
-                : (fileObj as File).path;
+            final path =
+                fileObj is AppFile ? fileObj.path : (fileObj as File).path;
 
             // Check if file already has tags
             final isAppFileWithTags =
@@ -970,8 +967,10 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
               fullContext = '${fullContext.substring(0, 147)}...';
             }
 
+            final keywordCount = settings.defaultKeywordsCount;
+
             final options = GenerationOptions(
-              numberOfKeywords: _numKeywords,
+              numberOfKeywords: keywordCount,
               shortTitle: false,
               contextAndInstructions: fullContext,
             );
@@ -1004,44 +1003,48 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
             if (!baseTags.contains(AppTags.aiGenerated)) {
               baseTags.add(AppTags.aiGenerated);
             }
-            if (editorialForSave.isEditorial && !baseTags.contains(AppTags.editorial)) {
+            if (editorialForSave.isEditorial &&
+                !baseTags.contains(AppTags.editorial)) {
               baseTags.add(AppTags.editorial);
             }
             if (!editorialForSave.isEditorial) {
               baseTags.remove(AppTags.editorial);
             }
 
-            final newFile = existing != null
-                ? existing.copyWith(
-                    metadataTitle: finalTitle,
-                    metadataKeywords: keywordsString,
-                    metadataDescription: fetchedDescription.isEmpty
-                        ? null
-                        : fetchedDescription,
-                    isEditorial: editorialForSave.isEditorial,
-                    editorialCity: batchCity,
-                    editorialCountry: batchCountry,
-                    editorialDate: batchExif?.date?.millisecondsSinceEpoch,
-                    workflowStatus: WorkflowStatus.readyToUpload,
-                    tags: baseTags,
-                  )
-                : AppFile(
-                    id: const Uuid().v4(),
-                    path: path,
-                    filename: path.split(Platform.pathSeparator).last,
-                    metadataTitle: finalTitle,
-                    metadataKeywords: keywordsString,
-                    metadataDescription: fetchedDescription.isEmpty
-                        ? null
-                        : fetchedDescription,
-                    isEditorial: editorialForSave.isEditorial,
-                    editorialCity: batchCity,
-                    editorialCountry: batchCountry,
-                    editorialDate: batchExif?.date?.millisecondsSinceEpoch,
-                    workflowStatus: WorkflowStatus.readyToUpload,
-                    createdAt: DateTime.now().millisecondsSinceEpoch,
-                    tags: baseTags,
-                  );
+            final newFile =
+                existing != null
+                    ? existing.copyWith(
+                      metadataTitle: finalTitle,
+                      metadataKeywords: keywordsString,
+                      metadataDescription:
+                          fetchedDescription.isEmpty
+                              ? null
+                              : fetchedDescription,
+                      isEditorial: editorialForSave.isEditorial,
+                      editorialCity: batchCity,
+                      editorialCountry: batchCountry,
+                      editorialDate: batchExif?.date?.millisecondsSinceEpoch,
+                      workflowStatus: WorkflowStatus.readyToUpload,
+                      tags: baseTags,
+                    )
+                    : AppFile(
+                      id: const Uuid().v4(),
+                      path: path,
+                      filename: path.split(Platform.pathSeparator).last,
+                      metadataTitle: finalTitle,
+                      metadataKeywords: keywordsString,
+                      metadataDescription:
+                          fetchedDescription.isEmpty
+                              ? null
+                              : fetchedDescription,
+                      isEditorial: editorialForSave.isEditorial,
+                      editorialCity: batchCity,
+                      editorialCountry: batchCountry,
+                      editorialDate: batchExif?.date?.millisecondsSinceEpoch,
+                      workflowStatus: WorkflowStatus.readyToUpload,
+                      createdAt: DateTime.now().millisecondsSinceEpoch,
+                      tags: baseTags,
+                    );
 
             await ref.read(filesProvider.notifier).addFile(newFile);
 
@@ -1107,33 +1110,50 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
 
           AppFile newFile;
           if (existing != null) {
-            String finalTitle = batchTitle.isNotEmpty
-                ? batchTitle
-                : (existing.metadataTitle ?? '');
+            String finalTitle =
+                batchTitle.isNotEmpty
+                    ? batchTitle
+                    : (existing.metadataTitle ?? '');
             if (editorialForSave.isEditorial && finalTitle.isNotEmpty) {
               finalTitle = _appendEditorialToTitle(
                 title: finalTitle,
-                city: editorialForSave.city.isNotEmpty ? editorialForSave.city : (existing.editorialCity ?? ''),
-                country: editorialForSave.country.isNotEmpty ? editorialForSave.country : (existing.editorialCountry ?? ''),
-                date: editorialForSave.date ?? (existing.editorialDate != null ? DateTime.fromMillisecondsSinceEpoch(existing.editorialDate!) : null),
+                city:
+                    editorialForSave.city.isNotEmpty
+                        ? editorialForSave.city
+                        : (existing.editorialCity ?? ''),
+                country:
+                    editorialForSave.country.isNotEmpty
+                        ? editorialForSave.country
+                        : (existing.editorialCountry ?? ''),
+                date:
+                    editorialForSave.date ??
+                    (existing.editorialDate != null
+                        ? DateTime.fromMillisecondsSinceEpoch(
+                          existing.editorialDate!,
+                        )
+                        : null),
               );
             }
 
             newFile = existing.copyWith(
               metadataTitle: finalTitle.isNotEmpty ? finalTitle : null,
-              metadataKeywords: batchKeywords.isNotEmpty
-                  ? batchKeywords
-                  : existing.metadataKeywords,
-              metadataDescription: description.isNotEmpty
-                  ? description
-                  : existing.metadataDescription,
+              metadataKeywords:
+                  batchKeywords.isNotEmpty
+                      ? batchKeywords
+                      : existing.metadataKeywords,
+              metadataDescription:
+                  description.isNotEmpty
+                      ? description
+                      : existing.metadataDescription,
               isEditorial: editorialForSave.isEditorial,
-              editorialCity: editorialForSave.city.isNotEmpty
-                  ? editorialForSave.city
-                  : existing.editorialCity,
-              editorialCountry: editorialForSave.country.isNotEmpty
-                  ? editorialForSave.country
-                  : existing.editorialCountry,
+              editorialCity:
+                  editorialForSave.city.isNotEmpty
+                      ? editorialForSave.city
+                      : existing.editorialCity,
+              editorialCountry:
+                  editorialForSave.country.isNotEmpty
+                      ? editorialForSave.country
+                      : existing.editorialCountry,
               editorialDate:
                   editorialForSave.date?.millisecondsSinceEpoch ??
                   existing.editorialDate,
@@ -1246,9 +1266,10 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
       final newFile = AppFile(
         id: const Uuid().v4(),
         path: _selectedLocalInspectorFile!.path,
-        filename: _selectedLocalInspectorFile!.path
-            .split(Platform.pathSeparator)
-            .last,
+        filename:
+            _selectedLocalInspectorFile!.path
+                .split(Platform.pathSeparator)
+                .last,
         metadataTitle: finalTitle,
         metadataKeywords: keywords,
         isEditorial: editorialForSave.isEditorial,
@@ -1337,9 +1358,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: isDark
-            ? AppTheme.successColorDark
-            : AppTheme.successColor,
+        backgroundColor:
+            isDark ? AppTheme.successColorDark : AppTheme.successColor,
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -1381,11 +1401,12 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
 
             // Calculate columns so thumbnails fill the fixed width/height
             // Use the smallest grid that fits all images: ceil(sqrt(count))
-            final cols = displayCount <= 1
-                ? 1
-                : (displayCount <= 4
-                      ? 2
-                      : (displayCount <= 9
+            final cols =
+                displayCount <= 1
+                    ? 1
+                    : (displayCount <= 4
+                        ? 2
+                        : (displayCount <= 9
                             ? 3
                             : (displayCount <= 16 ? 4 : maxCols)));
 
@@ -1394,9 +1415,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
             // Cell size derived from whichever axis is more constrained
             final cellByWidth = (panelWidth - spacing * (cols - 1)) / cols;
             final cellByHeight = (fixedHeight - spacing * (rows - 1)) / rows;
-            final cellSize = cellByWidth < cellByHeight
-                ? cellByWidth
-                : cellByHeight;
+            final cellSize =
+                cellByWidth < cellByHeight ? cellByWidth : cellByHeight;
 
             final limit = isOverflow ? maxVisible - 1 : paths.length;
             final children = <Widget>[];
@@ -1468,9 +1488,9 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
         TextField(
           controller: _contextController,
           maxLines: 2,
-          decoration: _inputDecoration(context).copyWith(
-            hintText: 'Доп. контекст для AI (бренды, событие и т.д.)',
-          ),
+          decoration: _inputDecoration(
+            context,
+          ).copyWith(hintText: 'Доп. контекст для AI (бренды, событие и т.д.)'),
           style: const TextStyle(fontSize: 13, height: 1.4),
         ),
         const SizedBox(height: 16),
@@ -1490,10 +1510,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
         ValueListenableBuilder<TextEditingValue>(
           valueListenable: _keywordsController,
           builder: (context, value, child) {
-            final count = value.text
-                .split(',')
-                .where((e) => e.trim().isNotEmpty)
-                .length;
+            final count =
+                value.text.split(',').where((e) => e.trim().isNotEmpty).length;
             return GenerationFormLabel(
               'BATCH KEYWORDS ($count) (оставьте пустым для сохранения текущего)',
             );
@@ -1605,7 +1623,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
       }
       return '$newTitle$suffix.';
     }
-    
+
     return newTitle.isEmpty ? '' : '$newTitle.';
   }
 
@@ -1669,15 +1687,17 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.of(
-                    context,
-                  ).pop((replace: false, applyToAll: applyToAll)),
+                  onPressed:
+                      () => Navigator.of(
+                        context,
+                      ).pop((replace: false, applyToAll: applyToAll)),
                   child: const Text('Пропустить'),
                 ),
                 FilledButton(
-                  onPressed: () => Navigator.of(
-                    context,
-                  ).pop((replace: true, applyToAll: applyToAll)),
+                  onPressed:
+                      () => Navigator.of(
+                        context,
+                      ).pop((replace: true, applyToAll: applyToAll)),
                   child: const Text('Заменить'),
                 ),
               ],
@@ -1706,14 +1726,6 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
     final colorScheme = Theme.of(context).colorScheme;
     final currentPath = ref.watch(workspacesProvider).currentPath;
 
-    if (!_numKeywordsInitialized) {
-      final settings = ref.read(settingsProvider).value;
-      if (settings != null) {
-        _numKeywords = settings.defaultKeywordsCount;
-        _numKeywordsInitialized = true;
-      }
-    }
-
     ref.listen(workspacesProvider, (prev, next) {
       if (prev?.currentPath != next.currentPath) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1738,13 +1750,16 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
       final dbFiles = next.value ?? [];
       if (_selectedExistingFile != null) {
         final updatedFile = dbFiles.firstWhereOrNull(
-            (f) => f.id == _selectedExistingFile!.id);
+          (f) => f.id == _selectedExistingFile!.id,
+        );
         if (updatedFile != null && updatedFile != _selectedExistingFile) {
           setState(() {
             _selectedExistingFile = updatedFile;
             // Also sync the provider if it's the single selected file in the inspector
             if (_selectedPaths.length == 1) {
-              ref.read(editorialStateProvider.notifier).syncFromFile(updatedFile);
+              ref
+                  .read(editorialStateProvider.notifier)
+                  .syncFromFile(updatedFile);
             }
           });
         }
@@ -1785,15 +1800,16 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
                       final wp = ref.read(workspacesProvider).currentPath;
                       final sep = Platform.pathSeparator;
                       ref.read(filesProvider).whenData((dbFiles) {
-                        final dbInWorkspace = wp == null || wp.isEmpty
-                            ? <AppFile>[]
-                            : dbFiles
-                                  .where(
-                                    (f) =>
-                                        f.path == wp ||
-                                        f.path.startsWith(wp + sep),
-                                  )
-                                  .toList();
+                        final dbInWorkspace =
+                            wp == null || wp.isEmpty
+                                ? <AppFile>[]
+                                : dbFiles
+                                    .where(
+                                      (f) =>
+                                          f.path == wp ||
+                                          f.path.startsWith(wp + sep),
+                                    )
+                                    .toList();
                         _selectAll(dbInWorkspace, _localFiles);
                       });
                     },
@@ -1807,12 +1823,13 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
                     searchQuery: _searchQuery,
                     filterType: _filterType,
                     activeTagFilters: _activeTagFilters,
-                    onSearchChanged: (value) =>
-                        setState(() => _searchQuery = value),
-                    onFilterChanged: (value) =>
-                        setState(() => _filterType = value),
-                    onTagFiltersChanged: (updated) =>
-                        setState(() => _activeTagFilters = updated),
+                    onSearchChanged:
+                        (value) => setState(() => _searchQuery = value),
+                    onFilterChanged:
+                        (value) => setState(() => _filterType = value),
+                    onTagFiltersChanged:
+                        (updated) =>
+                            setState(() => _activeTagFilters = updated),
                   ),
                   // Grid Area
                   Expanded(
@@ -1861,42 +1878,46 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
                         }
                       },
                       child: Container(
-                        color: _isDragging
-                            ? colorScheme.primary.withValues(alpha: 0.05)
-                            : null,
+                        color:
+                            _isDragging
+                                ? colorScheme.primary.withValues(alpha: 0.05)
+                                : null,
                         child: Builder(
                           builder: (context) {
                             final filesState = ref.watch(filesProvider);
 
                             return filesState.when(
-                              loading: () => const Center(
-                                child: CircularProgressIndicator(),
-                              ),
-                              error: (e, _) => Center(
-                                child: Text('Failed to load files: $e'),
-                              ),
+                              loading:
+                                  () => const Center(
+                                    child: CircularProgressIndicator(),
+                                  ),
+                              error:
+                                  (e, _) => Center(
+                                    child: Text('Failed to load files: $e'),
+                                  ),
                               data: (dbFiles) {
                                 final sep = Platform.pathSeparator;
-                                final workspacePath = ref
-                                    .read(workspacesProvider)
-                                    .currentPath;
+                                final workspacePath =
+                                    ref.read(workspacesProvider).currentPath;
                                 final dbFilesInWorkspace =
                                     workspacePath == null ||
-                                        workspacePath.isEmpty
-                                    ? <AppFile>[]
-                                    : dbFiles.where((f) {
-                                        final p = f.path;
-                                        return p == workspacePath ||
-                                            p.startsWith(workspacePath + sep);
-                                      }).toList();
+                                            workspacePath.isEmpty
+                                        ? <AppFile>[]
+                                        : dbFiles.where((f) {
+                                          final p = f.path;
+                                          return p == workspacePath ||
+                                              p.startsWith(workspacePath + sep);
+                                        }).toList();
 
-                                final currentLocalFiles = _localFiles
-                                    .where(
-                                      (lf) => !dbFilesInWorkspace.any(
-                                        (df) => df.path == lf.path,
-                                      ),
-                                    )
-                                    .toList();
+                                final currentLocalFiles =
+                                    _localFiles
+                                        .where(
+                                          (lf) =>
+                                              !dbFilesInWorkspace.any(
+                                                (df) => df.path == lf.path,
+                                              ),
+                                        )
+                                        .toList();
 
                                 // Применяем фильтры
                                 final filtered = _applyFilters(
@@ -2011,9 +2032,10 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
                                 for (final f in filteredLocals) {
                                   allItems.add((
                                     path: f.path,
-                                    filename: f.path
-                                        .split(Platform.pathSeparator)
-                                        .last,
+                                    filename:
+                                        f.path
+                                            .split(Platform.pathSeparator)
+                                            .last,
                                     isTagged: false,
                                     tags: const [],
                                     existing: null,
@@ -2039,9 +2061,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
                                   ),
                                 );
 
-                                final allPaths = allItems
-                                    .map((e) => e.path)
-                                    .toList();
+                                final allPaths =
+                                    allItems.map((e) => e.path).toList();
 
                                 return GridView.builder(
                                   padding: const EdgeInsets.all(24),
@@ -2063,13 +2084,14 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
                                       isSelected: _selectedPaths.contains(
                                         item.path,
                                       ),
-                                      onTap: () => _toggleSelection(
-                                        index,
-                                        item.path,
-                                        allPaths,
-                                        existing: item.existing,
-                                        local: item.local,
-                                      ),
+                                      onTap:
+                                          () => _toggleSelection(
+                                            index,
+                                            item.path,
+                                            allPaths,
+                                            existing: item.existing,
+                                            local: item.local,
+                                          ),
                                     );
                                   },
                                 );
@@ -2131,328 +2153,365 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
                     ),
                   ),
                   Expanded(
-                    child: _selectedPaths.isEmpty
-                        ? Center(
-                            child: Text(
-                              'Выберите изображение',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: colorScheme.onSurface.withValues(
-                                  alpha: 0.5,
+                    child:
+                        _selectedPaths.isEmpty
+                            ? Center(
+                              child: Text(
+                                'Выберите изображение',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: colorScheme.onSurface.withValues(
+                                    alpha: 0.5,
+                                  ),
                                 ),
                               ),
-                            ),
-                          )
-                        : _selectedPaths.length > 1 ||
-                              (_selectedLocalInspectorFile == null &&
-                                  _selectedExistingFile == null)
-                        ? _buildMultiSelectPanel(colorScheme)
-                        : ListView(
-                            padding: const EdgeInsets.all(16),
-                            children: [
-                              // Image/Video Preview
-                              Builder(
-                                builder: (context) {
-                                  final previewPath =
-                                      _selectedLocalInspectorFile?.path ??
-                                      _selectedExistingFile?.path ??
-                                      _selectedPaths.first;
-                                  final isVideo =
-                                      [
-                                        '.mp4',
-                                        '.mov',
-                                        '.avi',
-                                        '.mkv',
-                                        '.m4v',
-                                      ].any(
-                                        (ext) => previewPath
-                                            .toLowerCase()
-                                            .endsWith(ext),
-                                      );
+                            )
+                            : _selectedPaths.length > 1 ||
+                                (_selectedLocalInspectorFile == null &&
+                                    _selectedExistingFile == null)
+                            ? _buildMultiSelectPanel(colorScheme)
+                            : ListView(
+                              padding: const EdgeInsets.all(16),
+                              children: [
+                                // Image/Video Preview
+                                Builder(
+                                  builder: (context) {
+                                    final previewPath =
+                                        _selectedLocalInspectorFile?.path ??
+                                        _selectedExistingFile?.path ??
+                                        _selectedPaths.first;
+                                    final isVideo = [
+                                      '.mp4',
+                                      '.mov',
+                                      '.avi',
+                                      '.mkv',
+                                      '.m4v',
+                                    ].any(
+                                      (ext) => previewPath
+                                          .toLowerCase()
+                                          .endsWith(ext),
+                                    );
 
-                                  if (isVideo) {
+                                    if (isVideo) {
+                                      return Container(
+                                        height: 180,
+                                        width: double.infinity,
+                                        clipBehavior: Clip.antiAlias,
+                                        decoration: BoxDecoration(
+                                          color:
+                                              colorScheme
+                                                  .surfaceContainerHighest,
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                        ),
+                                        child: FutureBuilder(
+                                          future:
+                                              MetadataService.readExifLocationAndDate(
+                                                previewPath,
+                                              ),
+                                          builder: (context, snapshot) {
+                                            final hasAudio =
+                                                snapshot.data?.hasAudio ??
+                                                false;
+                                            return VideoPlayerWidget(
+                                              videoPath: previewPath,
+                                              hasAudio: hasAudio,
+                                            );
+                                          },
+                                        ),
+                                      );
+                                    }
+
                                     return Container(
                                       height: 180,
-                                      width: double.infinity,
-                                      clipBehavior: Clip.antiAlias,
                                       decoration: BoxDecoration(
-                                        color:
-                                            colorScheme.surfaceContainerHighest,
+                                        color: colorScheme.outlineVariant,
                                         borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      child: FutureBuilder(
-                                        future:
-                                            MetadataService.readExifLocationAndDate(
-                                              previewPath,
-                                            ),
-                                        builder: (context, snapshot) {
-                                          final hasAudio =
-                                              snapshot.data?.hasAudio ?? false;
-                                          return VideoPlayerWidget(
-                                            videoPath: previewPath,
-                                            hasAudio: hasAudio,
-                                          );
-                                        },
+                                        image: DecorationImage(
+                                          image: FileImage(File(previewPath)),
+                                          fit: BoxFit.cover,
+                                        ),
                                       ),
                                     );
-                                  }
-
-                                  return Container(
-                                    height: 180,
-                                    decoration: BoxDecoration(
-                                      color: colorScheme.outlineVariant,
-                                      borderRadius: BorderRadius.circular(8),
-                                      image: DecorationImage(
-                                        image: FileImage(File(previewPath)),
-                                        fit: BoxFit.cover,
+                                  },
+                                ),
+                                const SizedBox(height: 12),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            (_selectedLocalInspectorFile?.path
+                                                    .split(
+                                                      Platform.pathSeparator,
+                                                    )
+                                                    .last ??
+                                                _selectedExistingFile!
+                                                    .filename),
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 14,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          Text(
+                                            'Local File',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: colorScheme.onSurface
+                                                  .withValues(alpha: 0.6),
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
-                                  );
-                                },
-                              ),
-                              const SizedBox(height: 12),
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          (_selectedLocalInspectorFile?.path
-                                                  .split(Platform.pathSeparator)
-                                                  .last ??
-                                              _selectedExistingFile!.filename),
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 14,
+                                    Builder(
+                                      builder: (context) {
+                                        final isDark =
+                                            Theme.of(context).brightness ==
+                                            Brightness.dark;
+                                        final isEmpty =
+                                            _keywordsController.text.isEmpty;
+                                        final bgColor =
+                                            isEmpty
+                                                ? AppTheme.warningColor
+                                                    .withValues(alpha: 0.2)
+                                                : AppTheme.successColor
+                                                    .withValues(alpha: 0.2);
+                                        final fgColor =
+                                            isEmpty
+                                                ? (isDark
+                                                    ? AppTheme.warningColorDark
+                                                    : AppTheme.warningColor)
+                                                : (isDark
+                                                    ? AppTheme.successColorDark
+                                                    : AppTheme.successColor);
+                                        return Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 4,
                                           ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        Text(
-                                          'Local File',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: colorScheme.onSurface
-                                                .withValues(alpha: 0.6),
+                                          decoration: BoxDecoration(
+                                            color: bgColor,
+                                            borderRadius: BorderRadius.circular(
+                                              4,
+                                            ),
                                           ),
-                                        ),
-                                      ],
+                                          child: Text(
+                                            isEmpty ? 'Untagged' : 'Tagged',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                              color: fgColor,
+                                            ),
+                                          ),
+                                        );
+                                      },
                                     ),
+                                  ],
+                                ),
+
+                                const SizedBox(height: 16),
+                                GenerationEditorialSection(
+                                  isMulti: false,
+                                  selectedPaths: _selectedPaths,
+                                  selectedExistingFile: _selectedExistingFile,
+                                  selectedLocalInspectorPath:
+                                      _selectedLocalInspectorFile?.path,
+                                ),
+                                const GenerationFormLabel('КОНТЕКСТ'),
+                                const SizedBox(height: 6),
+                                TextField(
+                                  controller: _contextController,
+                                  maxLines: 2,
+                                  decoration: _inputDecoration(
+                                    context,
+                                  ).copyWith(
+                                    hintText:
+                                        'Доп. контекст для AI (бренды, событие и т.д.)',
                                   ),
-                                  Builder(
-                                    builder: (context) {
-                                      final isDark =
-                                          Theme.of(context).brightness ==
-                                          Brightness.dark;
-                                      final isEmpty =
-                                          _keywordsController.text.isEmpty;
-                                      final bgColor = isEmpty
-                                          ? AppTheme.warningColor.withValues(
-                                              alpha: 0.2,
-                                            )
-                                          : AppTheme.successColor.withValues(
-                                              alpha: 0.2,
-                                            );
-                                      final fgColor = isEmpty
-                                          ? (isDark
-                                                ? AppTheme.warningColorDark
-                                                : AppTheme.warningColor)
-                                          : (isDark
-                                                ? AppTheme.successColorDark
-                                                : AppTheme.successColor);
-                                      return Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 4,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    height: 1.4,
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+
+                                // Metadata Form
+                                const GenerationFormLabel('TITLE'),
+                                const SizedBox(height: 6),
+                                TextField(
+                                  controller: _titleController,
+                                  decoration: _inputDecoration(context),
+                                  style: const TextStyle(fontSize: 14),
+                                  onChanged:
+                                      (_) =>
+                                          setState(() => _metadataDirty = true),
+                                ),
+
+                                const SizedBox(height: 16),
+                                const GenerationFormLabel('DESCRIPTION'),
+                                const SizedBox(height: 6),
+                                TextField(
+                                  controller: _descriptionController,
+                                  maxLines: 3,
+                                  decoration: _inputDecoration(context),
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    height: 1.5,
+                                  ),
+                                  onChanged:
+                                      (_) =>
+                                          setState(() => _metadataDirty = true),
+                                ),
+
+                                const SizedBox(height: 16),
+                                ValueListenableBuilder<TextEditingValue>(
+                                  valueListenable: _keywordsController,
+                                  builder: (context, value, child) {
+                                    final count =
+                                        value.text
+                                            .split(',')
+                                            .where((e) => e.trim().isNotEmpty)
+                                            .length;
+                                    return GenerationFormLabel(
+                                      'КЛЮЧЕВЫЕ СЛОВА ($count)',
+                                    );
+                                  },
+                                ),
+                                const SizedBox(height: 6),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: FilledButton.icon(
+                                        onPressed:
+                                            _isLoading ? null : _generateAI,
+                                        icon: const Icon(
+                                          Icons.auto_awesome,
+                                          size: 18,
                                         ),
-                                        decoration: BoxDecoration(
-                                          color: bgColor,
-                                          borderRadius: BorderRadius.circular(
-                                            4,
-                                          ),
+                                        label: const Text('Генерация AI'),
+                                        style: FilledButton.styleFrom(
+                                          backgroundColor: colorScheme.primary,
+                                          foregroundColor:
+                                              colorScheme.onPrimary,
                                         ),
-                                        child: Text(
-                                          isEmpty ? 'Untagged' : 'Tagged',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w600,
-                                            color: fgColor,
-                                          ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+                                KeywordsInputWidget(
+                                  controller: _keywordsController,
+                                  onChanged:
+                                      (_) =>
+                                          setState(() => _metadataDirty = true),
+                                ),
+                                if (_isLoading)
+                                  const Padding(
+                                    padding: EdgeInsets.only(top: 8),
+                                    child: LinearProgressIndicator(),
+                                  ),
+
+                                const SizedBox(height: 24),
+                                const Divider(),
+                                const SizedBox(height: 16),
+
+                                GenerationFormLabel('STOCK STATUS'),
+                                const SizedBox(height: 12),
+
+                                Builder(
+                                  builder: (context) {
+                                    final settings =
+                                        ref.watch(settingsProvider).value;
+                                    final adobeCreds =
+                                        settings?.adobeCredentials;
+                                    final shutterCreds =
+                                        settings?.shutterstockCredentials;
+
+                                    final hasAdobe =
+                                        adobeCreds != null &&
+                                        !adobeCreds.isEmpty;
+                                    final hasShutter =
+                                        shutterCreds != null &&
+                                        !shutterCreds.isEmpty;
+
+                                    if (!hasAdobe && !hasShutter) {
+                                      return Text(
+                                        'Add stock credentials in Settings first.',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: colorScheme.onSurface
+                                              .withValues(alpha: 0.6),
                                         ),
                                       );
-                                    },
-                                  ),
-                                ],
-                              ),
+                                    }
 
-                              const SizedBox(height: 16),
-                              GenerationEditorialSection(
-                                isMulti: false,
-                                selectedPaths: _selectedPaths,
-                                selectedExistingFile: _selectedExistingFile,
-                                selectedLocalInspectorPath:
-                                    _selectedLocalInspectorFile?.path,
-                              ),
-                              const GenerationFormLabel('КОНТЕКСТ'),
-                              const SizedBox(height: 6),
-                              TextField(
-                                controller: _contextController,
-                                maxLines: 2,
-                                decoration: _inputDecoration(context).copyWith(
-                                  hintText: 'Доп. контекст для AI (бренды, событие и т.д.)',
+                                    // We look at the upload queue to see if there is any successful upload for this specific file
+                                    final queue =
+                                        ref.watch(uploadQueueProvider).value ??
+                                        [];
+                                    final fileId = _selectedExistingFile?.id;
+
+                                    bool isUploadedTo(String stockKey) {
+                                      if (fileId == null) return false;
+                                      return queue.any(
+                                        (j) =>
+                                            j.fileId == fileId &&
+                                            j.stockKey == stockKey &&
+                                            j.status == UploadJobStatus.success,
+                                      );
+                                    }
+
+                                    return Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        if (hasAdobe) ...[
+                                          GenerationStockStatusCard(
+                                            code: 'AS',
+                                            label: 'Adobe Stock',
+                                            color: Colors.red,
+                                            isUploaded: isUploadedTo('adobe'),
+                                          ),
+                                          const SizedBox(height: 8),
+                                        ],
+                                        if (hasShutter) ...[
+                                          GenerationStockStatusCard(
+                                            code: 'SS',
+                                            label: 'Shutterstock',
+                                            color: Colors.blue,
+                                            isUploaded: isUploadedTo(
+                                              'shutterstock',
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    );
+                                  },
                                 ),
-                                style: const TextStyle(fontSize: 13, height: 1.4),
-                              ),
-                              const SizedBox(height: 16),
 
-                              // Metadata Form
-                              const GenerationFormLabel('TITLE'),
-                              const SizedBox(height: 6),
-                              TextField(
-                                controller: _titleController,
-                                decoration: _inputDecoration(context),
-                                style: const TextStyle(fontSize: 14),
-                                onChanged: (_) =>
-                                    setState(() => _metadataDirty = true),
-                              ),
-
-                              const SizedBox(height: 16),
-                              const GenerationFormLabel('DESCRIPTION'),
-                              const SizedBox(height: 6),
-                              TextField(
-                                controller: _descriptionController,
-                                maxLines: 3,
-                                decoration: _inputDecoration(context),
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  height: 1.5,
-                                ),
-                                onChanged: (_) =>
-                                    setState(() => _metadataDirty = true),
-                              ),
-
-                              const SizedBox(height: 16),
-                              ValueListenableBuilder<TextEditingValue>(
-                                valueListenable: _keywordsController,
-                                builder: (context, value, child) {
-                                  final count = value.text
-                                      .split(',')
-                                      .where((e) => e.trim().isNotEmpty)
-                                      .length;
-                                  return GenerationFormLabel('КЛЮЧЕВЫЕ СЛОВА ($count)');
-                                },
-                              ),
-                              const SizedBox(height: 6),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: FilledButton.icon(
-                                      onPressed: _isLoading
-                                          ? null
-                                          : _generateAI,
-                                      icon: const Icon(
-                                        Icons.auto_awesome,
-                                        size: 18,
-                                      ),
-                                      label: const Text('Генерация AI'),
-                                      style: FilledButton.styleFrom(
-                                        backgroundColor: colorScheme.primary,
-                                        foregroundColor: colorScheme.onPrimary,
-                                      ),
+                                const SizedBox(height: 32),
+                                FilledButton(
+                                  onPressed: _saveChanges,
+                                  style: FilledButton.styleFrom(
+                                    minimumSize: const Size.fromHeight(44),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
                                     ),
                                   ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
-                              KeywordsInputWidget(
-                                controller: _keywordsController,
-                                onChanged: (_) =>
-                                    setState(() => _metadataDirty = true),
-                              ),
-                              if (_isLoading)
-                                const Padding(
-                                  padding: EdgeInsets.only(top: 8),
-                                  child: LinearProgressIndicator(),
+                                  child: const Text('Save Changes'),
                                 ),
-
-                              const SizedBox(height: 24),
-                              const Divider(),
-                              const SizedBox(height: 16),
-
-                              GenerationFormLabel('STOCK STATUS'),
-                              const SizedBox(height: 12),
-
-                              Builder(
-                                builder: (context) {
-                                  final settings = ref.watch(settingsProvider).value;
-                                  final adobeCreds = settings?.adobeCredentials;
-                                  final shutterCreds = settings?.shutterstockCredentials;
-
-                                  final hasAdobe = adobeCreds != null && !adobeCreds.isEmpty;
-                                  final hasShutter = shutterCreds != null && !shutterCreds.isEmpty;
-
-                                  if (!hasAdobe && !hasShutter) {
-                                    return Text(
-                                      'Add stock credentials in Settings first.',
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: colorScheme.onSurface.withValues(alpha: 0.6),
-                                      ),
-                                    );
-                                  }
-
-                                  // We look at the upload queue to see if there is any successful upload for this specific file
-                                  final queue = ref.watch(uploadQueueProvider).value ?? [];
-                                  final fileId = _selectedExistingFile?.id;
-                                  
-                                  bool isUploadedTo(String stockKey) {
-                                    if (fileId == null) return false;
-                                    return queue.any((j) => j.fileId == fileId && j.stockKey == stockKey && j.status == UploadJobStatus.success);
-                                  }
-
-                                  return Column(
-                                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                                    children: [
-                                      if (hasAdobe) ...[
-                                        GenerationStockStatusCard(
-                                          code: 'AS',
-                                          label: 'Adobe Stock',
-                                          color: Colors.red,
-                                          isUploaded: isUploadedTo('adobe'),
-                                        ),
-                                        const SizedBox(height: 8),
-                                      ],
-                                      if (hasShutter) ...[
-                                        GenerationStockStatusCard(
-                                          code: 'SS',
-                                          label: 'Shutterstock',
-                                          color: Colors.blue,
-                                          isUploaded: isUploadedTo('shutterstock'),
-                                        ),
-                                      ],
-                                    ],
-                                  );
-                                },
-                              ),
-
-                              const SizedBox(height: 32),
-                              FilledButton(
-                                onPressed: _saveChanges,
-                                style: FilledButton.styleFrom(
-                                  minimumSize: const Size.fromHeight(44),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                ),
-                                child: const Text('Save Changes'),
-                              ),
-                            ],
-                          ),
+                              ],
+                            ),
                   ),
                 ],
               ),

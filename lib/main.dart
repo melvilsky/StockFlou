@@ -33,16 +33,16 @@ Future<void> main() async {
     await windowConfig.init();
   });
 
-  runApp(const ProviderScope(child: StockFlouApp()));
+  runApp(const ProviderScope(child: StockFlowApp()));
 }
 
-class StockFlouApp extends StatelessWidget {
-  const StockFlouApp({super.key});
+class StockFlowApp extends StatelessWidget {
+  const StockFlowApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'StockFlou',
+      title: 'StockFlow',
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system,
@@ -115,7 +115,7 @@ class _MainShellState extends ConsumerState<MainShell> {
                         ),
                         const SizedBox(width: 8),
                         const Text(
-                          'StockFlou',
+                          'StockFlow',
                           style: TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,

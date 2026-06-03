@@ -1,4 +1,4 @@
-# stock_flou
+# stock_flow
 
 A new Flutter project.
 

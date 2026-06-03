@@ -14,9 +14,10 @@ import '../constants/app_constants.dart';
 Uint8List? _resizeImageInIsolate(Uint8List bytes) {
   final image = img.decodeImage(bytes);
   if (image == null) return null;
-  final resized = image.width > image.height
-      ? img.copyResize(image, width: 1600)
-      : img.copyResize(image, height: 1600);
+  final resized =
+      image.width > image.height
+          ? img.copyResize(image, width: 1600)
+          : img.copyResize(image, height: 1600);
   return Uint8List.fromList(img.encodeJpg(resized, quality: 85));
 }
 
@@ -37,15 +38,15 @@ class ApiClient {
     String uploadPath = filePath;
 
     final tempDir = await getTemporaryDirectory();
-    final stockFlouTemp = Directory(p.join(tempDir.path, 'stockflou_temp'));
-    if (!await stockFlouTemp.exists()) {
-      await stockFlouTemp.create(recursive: true);
+    final stockFlowTemp = Directory(p.join(tempDir.path, 'stock_flow_temp'));
+    if (!await stockFlowTemp.exists()) {
+      await stockFlowTemp.create(recursive: true);
     }
 
     if (AppConstants.isVideo(filePath)) {
       // Это видео: извлекаем кадр из середины
       final tempThumbPath = p.join(
-        stockFlouTemp.path,
+        stockFlowTemp.path,
         'vid_thumb_${DateTime.now().millisecondsSinceEpoch}.jpg',
       );
 
@@ -76,7 +77,7 @@ class ApiClient {
         );
         if (resizedBytes != null && resizedBytes.isNotEmpty) {
           final tempPath = p.join(
-            stockFlouTemp.path,
+            stockFlowTemp.path,
             'resized_${DateTime.now().millisecondsSinceEpoch}.jpg',
           );
           await File(tempPath).writeAsBytes(resizedBytes);

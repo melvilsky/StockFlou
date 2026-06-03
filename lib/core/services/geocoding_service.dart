@@ -49,7 +49,7 @@ class GeocodingService {
           'zoom': 10,
         },
         options: Options(
-          headers: {'User-Agent': 'StockFlou/1.0 (stock photo metadata tool)'},
+          headers: {'User-Agent': 'StockFlow/1.0 (stock photo metadata tool)'},
         ),
       );
 

@@ -1,4 +1,4 @@
-# UI-конвенции и клики (StockFlou)
+# UI-конвенции и клики (StockFlow)
 
 ## Одиночный клик на desktop (macOS / Windows)
 
