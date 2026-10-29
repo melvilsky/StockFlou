@@ -201,39 +201,6 @@ class _GenerationEditorialSectionState
     );
   }
 
-  Widget _autocompleteOptionsView(
-    BuildContext context,
-    AutocompleteOnSelected<String> onSelected,
-    Iterable<String> options,
-    ColorScheme colorScheme,
-  ) {
-    return Align(
-      alignment: Alignment.topLeft,
-      child: Material(
-        elevation: 8,
-        borderRadius: BorderRadius.circular(8),
-        color: colorScheme.surface,
-        clipBehavior: Clip.antiAlias,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 200, maxWidth: 296),
-          child: ListView.builder(
-            padding: EdgeInsets.zero,
-            shrinkWrap: true,
-            itemCount: options.length,
-            itemBuilder: (context, index) {
-              final option = options.elementAt(index);
-              return ListTile(
-                dense: true,
-                title: Text(option, style: const TextStyle(fontSize: 13)),
-                onTap: () => onSelected(option),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -400,12 +367,13 @@ class _GenerationEditorialSectionState
                 );
               },
               optionsViewBuilder:
-                  (context, onSelected, options) => _autocompleteOptionsView(
-                    context,
-                    onSelected,
-                    options,
-                    colorScheme,
-                  ),
+                  (context, onSelected, options) =>
+                      buildLocationAutocompleteOptions(
+                        context,
+                        onSelected,
+                        options,
+                        colorScheme,
+                      ),
             ),
           ),
           const SizedBox(height: 6),
@@ -440,12 +408,13 @@ class _GenerationEditorialSectionState
                 );
               },
               optionsViewBuilder:
-                  (context, onSelected, options) => _autocompleteOptionsView(
-                    context,
-                    onSelected,
-                    options,
-                    colorScheme,
-                  ),
+                  (context, onSelected, options) =>
+                      buildLocationAutocompleteOptions(
+                        context,
+                        onSelected,
+                        options,
+                        colorScheme,
+                      ),
             ),
           ),
           const SizedBox(height: 6),

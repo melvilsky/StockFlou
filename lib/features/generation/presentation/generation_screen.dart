@@ -2008,17 +2008,24 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
           if (request.editorial != null) {
             isEditorial = request.editorial!;
             if (isEditorial) {
-              city = request.city;
-              country = request.country;
-              date = request.date?.millisecondsSinceEpoch;
               if (!tags.contains(AppTags.editorial)) {
                 tags.add(AppTags.editorial);
               }
             } else {
+              // Выключение Editorial — явное действие: локация очищается.
               city = '';
               country = '';
               date = null;
               tags.remove(AppTags.editorial);
+            }
+          }
+          // Локация применяется только по явно отредактированным полям,
+          // иначе у файлов сохраняются их собственные город/страна/дата.
+          if (isEditorial) {
+            if (request.cityTouched) city = request.city;
+            if (request.countryTouched) country = request.country;
+            if (request.dateTouched) {
+              date = request.date?.millisecondsSinceEpoch;
             }
           }
           if (request.aiTag != null) {
@@ -2307,7 +2314,9 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
       keywordsCommon: commonKeywords,
       editorialMixed: editorials.length > 1,
       editorialCommon: editorials.length == 1 && editorials.first,
+      cityMixed: cities.length > 1,
       cityCommon: cities.length == 1 ? cities.first : '',
+      countryMixed: countries.length > 1,
       countryCommon: countries.length == 1 ? countries.first : '',
       dateCommon:
           rawDate == null

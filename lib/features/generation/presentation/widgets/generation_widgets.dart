@@ -32,6 +32,41 @@ class GenerationFormLabel extends StatelessWidget {
   }
 }
 
+/// Выпадающий список вариантов для `RawAutocomplete` полей локации.
+Widget buildLocationAutocompleteOptions(
+  BuildContext context,
+  AutocompleteOnSelected<String> onSelected,
+  Iterable<String> options,
+  ColorScheme colorScheme, {
+  double maxWidth = 296,
+}) {
+  return Align(
+    alignment: Alignment.topLeft,
+    child: Material(
+      elevation: 8,
+      borderRadius: BorderRadius.circular(8),
+      color: colorScheme.surface,
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: 200, maxWidth: maxWidth),
+        child: ListView.builder(
+          padding: EdgeInsets.zero,
+          shrinkWrap: true,
+          itemCount: options.length,
+          itemBuilder: (context, index) {
+            final option = options.elementAt(index);
+            return ListTile(
+              dense: true,
+              title: Text(option, style: const TextStyle(fontSize: 13)),
+              onTap: () => onSelected(option),
+            );
+          },
+        ),
+      ),
+    ),
+  );
+}
+
 // ─── Tag UI helpers ──────────────────────────────────────────────────────────
 
 /// Returns (label, color, icon) for a known tag key.

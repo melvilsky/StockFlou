@@ -40,6 +40,12 @@ class BatchEditRequest {
   final String country;
   final DateTime? date;
 
+  /// Поля локации применяются только при явном редактировании — иначе
+  /// у файлов сохраняются их собственные город/страна/дата.
+  final bool cityTouched;
+  final bool countryTouched;
+  final bool dateTouched;
+
   /// `null` — не трогать тег AI.
   final bool? aiTag;
 
@@ -55,6 +61,9 @@ class BatchEditRequest {
     this.city = '',
     this.country = '',
     this.date,
+    this.cityTouched = false,
+    this.countryTouched = false,
+    this.dateTouched = false,
     this.aiTag,
   });
 
@@ -65,6 +74,9 @@ class BatchEditRequest {
       keywordsToAdd.isNotEmpty ||
       keywordsToRemove.isNotEmpty ||
       editorial != null ||
+      cityTouched ||
+      countryTouched ||
+      dateTouched ||
       aiTag != null;
 }
 
@@ -79,7 +91,9 @@ class BatchFieldInfo {
   final List<String> keywordsCommon;
   final bool editorialMixed;
   final bool editorialCommon;
+  final bool cityMixed;
   final String cityCommon;
+  final bool countryMixed;
   final String countryCommon;
   final DateTime? dateCommon;
   final bool aiMixed;
@@ -95,7 +109,9 @@ class BatchFieldInfo {
     required this.keywordsCommon,
     required this.editorialMixed,
     required this.editorialCommon,
+    required this.cityMixed,
     required this.cityCommon,
+    required this.countryMixed,
     required this.countryCommon,
     required this.dateCommon,
     required this.aiMixed,
@@ -112,7 +128,9 @@ class BatchFieldInfo {
     keywordsCommon: [],
     editorialMixed: false,
     editorialCommon: false,
+    cityMixed: false,
     cityCommon: '',
+    countryMixed: false,
     countryCommon: '',
     dateCommon: null,
     aiMixed: false,
@@ -203,11 +221,16 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
   final _multiCityController = TextEditingController();
   final _multiCountryController = TextEditingController();
   final _multiKeywordInputController = TextEditingController();
+  final _multiCityFocusNode = FocusNode();
+  final _multiCountryFocusNode = FocusNode();
 
   bool _titleTouched = false;
   bool _descriptionTouched = false;
   bool _titleCleared = false;
   bool _descriptionCleared = false;
+  bool _cityTouched = false;
+  bool _countryTouched = false;
+  bool _dateTouched = false;
   KeywordsApplyMode _keywordsMode = KeywordsApplyMode.add;
   final List<String> _keywordsToAdd = [];
   final List<String> _keywordsToRemove = [];
@@ -240,6 +263,8 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
     _multiCityController.dispose();
     _multiCountryController.dispose();
     _multiKeywordInputController.dispose();
+    _multiCityFocusNode.dispose();
+    _multiCountryFocusNode.dispose();
     super.dispose();
   }
 
@@ -256,6 +281,9 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
     _descriptionTouched = false;
     _titleCleared = false;
     _descriptionCleared = false;
+    _cityTouched = false;
+    _countryTouched = false;
+    _dateTouched = false;
     _keywordsMode = KeywordsApplyMode.add;
     _keywordsToAdd.clear();
     _keywordsToRemove.clear();
@@ -284,6 +312,9 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
       city: _multiCityController.text.trim(),
       country: _multiCountryController.text.trim(),
       date: _editorialDate,
+      cityTouched: _cityTouched,
+      countryTouched: _countryTouched,
+      dateTouched: _dateTouched,
       aiTag: _aiMode,
     );
   }
@@ -305,7 +336,7 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
 
   /// Общие значения показываются как значения, различающиеся — как placeholder.
   /// Значение из контроллера применяется только при явном редактировании
-  /// (`_titleTouched` / `_descriptionTouched`), поэтому показ не означает запись.
+  /// (touched-флаги), поэтому показ не означает запись.
   void _syncCommonValues(BatchFieldInfo info) {
     if (!_isBatch) return;
     if (!_titleTouched) {
@@ -319,6 +350,21 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
       if (_multiDescriptionController.text != common) {
         _multiDescriptionController.text = common;
       }
+    }
+    if (!_cityTouched) {
+      final common = info.cityMixed ? '' : info.cityCommon;
+      if (_multiCityController.text != common) {
+        _multiCityController.text = common;
+      }
+    }
+    if (!_countryTouched) {
+      final common = info.countryMixed ? '' : info.countryCommon;
+      if (_multiCountryController.text != common) {
+        _multiCountryController.text = common;
+      }
+    }
+    if (!_dateTouched) {
+      _editorialDate = info.dateCommon;
     }
   }
 
@@ -990,6 +1036,29 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
 
   Widget _batchEditorialField(AppPalette palette) {
     final info = widget.batchInfo;
+    final savedLocations =
+        ref.watch(settingsProvider).value?.savedLocations ?? const <String>[];
+    final cities =
+        savedLocations
+            .map((entry) => entry.split('|').first)
+            .where((entry) => entry.isNotEmpty)
+            .toSet()
+            .toList();
+    final countries =
+        savedLocations
+            .map(
+              (entry) => entry.split('|').length > 1 ? entry.split('|').last : '',
+            )
+            .where((entry) => entry.isNotEmpty)
+            .toSet()
+            .toList();
+    // Поля локации доступны и когда у всех файлов Editorial уже включён:
+    // иначе их нельзя ни увидеть, ни изменить без смены tri-state.
+    final locationAvailable =
+        _editorialMode == true ||
+        (_editorialMode == null &&
+            !info.editorialMixed &&
+            info.editorialCommon);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1011,25 +1080,58 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
               style: TextStyle(fontSize: 11, color: palette.textMuted),
             ),
           ),
-        if (_editorialMode == true) ...[
+        if (locationAvailable) ...[
           const SizedBox(height: AppSpacing.sm),
           Row(
             children: [
               Expanded(
-                child: TextField(
+                child: _batchLocationField(
+                  palette,
                   controller: _multiCityController,
-                  style: const TextStyle(fontSize: 12),
-                  decoration: const InputDecoration(hintText: 'Город'),
-                  onChanged: (_) => _emitDraft(),
+                  focusNode: _multiCityFocusNode,
+                  hint: 'Город',
+                  mixed: info.cityMixed,
+                  touched: _cityTouched,
+                  options: cities,
+                  onSelected: (selection) {
+                    _cityTouched = true;
+                    if (!_countryTouched &&
+                        _multiCountryController.text.isEmpty) {
+                      final match = savedLocations.firstWhere(
+                        (entry) => entry.startsWith('$selection|'),
+                        orElse: () => '',
+                      );
+                      if (match.isNotEmpty) {
+                        _multiCountryController.text = match.split('|').last;
+                        _countryTouched = true;
+                      }
+                    }
+                    _emitDraft();
+                  },
+                  onTouched: () => _cityTouched = true,
+                  onClear: () {
+                    _multiCityController.clear();
+                    _cityTouched = true;
+                    _emitDraft();
+                  },
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
               Expanded(
-                child: TextField(
+                child: _batchLocationField(
+                  palette,
                   controller: _multiCountryController,
-                  style: const TextStyle(fontSize: 12),
-                  decoration: const InputDecoration(hintText: 'Страна'),
-                  onChanged: (_) => _emitDraft(),
+                  focusNode: _multiCountryFocusNode,
+                  hint: 'Страна',
+                  mixed: info.countryMixed,
+                  touched: _countryTouched,
+                  options: countries,
+                  onTouched: () => _countryTouched = true,
+                  onClear: () {
+                    _multiCountryController.clear();
+                    _countryTouched = true;
+                    _emitDraft();
+                  },
                 ),
               ),
             ],
@@ -1046,7 +1148,10 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
                 helpText: 'Дата съёмки',
               );
               if (picked == null) return;
-              setState(() => _editorialDate = picked);
+              setState(() {
+                _editorialDate = picked;
+                _dateTouched = true;
+              });
               _emitDraft();
             },
             icon: const Icon(Icons.calendar_today, size: 14),
@@ -1071,6 +1176,81 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
           },
         ),
       ],
+    );
+  }
+
+  /// Поле локации с выбором из сохранённых мест: общие значения показываются
+  /// как значения, различающиеся — как placeholder; применяется только
+  /// при явном редактировании (`touched`).
+  Widget _batchLocationField(
+    AppPalette palette, {
+    required TextEditingController controller,
+    required FocusNode focusNode,
+    required String hint,
+    required bool mixed,
+    required bool touched,
+    required List<String> options,
+    required VoidCallback onTouched,
+    required VoidCallback onClear,
+    ValueChanged<String>? onSelected,
+  }) {
+    return RawAutocomplete<String>(
+      textEditingController: controller,
+      focusNode: focusNode,
+      optionsBuilder: (value) {
+        if (value.text.isEmpty) return options;
+        return options.where(
+          (option) => option.toLowerCase().contains(value.text.toLowerCase()),
+        );
+      },
+      onSelected: onSelected ?? (_) {},
+      fieldViewBuilder: (context, fieldController, fieldFocus, _) {
+        return ValueListenableBuilder<TextEditingValue>(
+          valueListenable: controller,
+          builder: (context, value, _) {
+            return TextField(
+              controller: fieldController,
+              focusNode: fieldFocus,
+              style: const TextStyle(fontSize: 12),
+              decoration: InputDecoration(
+                hintText: !touched && mixed ? 'Разные значения' : hint,
+                hintStyle: TextStyle(
+                  fontSize: 12,
+                  fontStyle:
+                      !touched && mixed
+                          ? FontStyle.italic
+                          : FontStyle.normal,
+                  color: mixed ? palette.warning : palette.textMuted,
+                ),
+                isDense: true,
+                suffixIcon:
+                    value.text.isNotEmpty || touched
+                        ? IconButton(
+                          tooltip: 'Очистить у выбранных файлов',
+                          onPressed: onClear,
+                          icon: const Icon(
+                            Icons.backspace_outlined,
+                            size: 15,
+                          ),
+                        )
+                        : null,
+              ),
+              onChanged: (_) {
+                onTouched();
+                _emitDraft();
+              },
+            );
+          },
+        );
+      },
+      optionsViewBuilder:
+          (context, selected, opts) => buildLocationAutocompleteOptions(
+            context,
+            selected,
+            opts,
+            Theme.of(context).colorScheme,
+            maxWidth: 240,
+          ),
     );
   }
 
