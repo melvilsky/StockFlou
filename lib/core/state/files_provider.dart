@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/app_file.dart';
 import '../database/database_helper.dart';
@@ -5,7 +6,28 @@ import '../database/database_helper.dart';
 class FilesNotifier extends AsyncNotifier<List<AppFile>> {
   @override
   Future<List<AppFile>> build() async {
-    return await DatabaseHelper.instance.getAllFiles();
+    final files = await DatabaseHelper.instance.getAllFiles();
+    return _filterExistingFiles(files);
+  }
+
+  Future<List<AppFile>> _filterExistingFiles(List<AppFile> files) async {
+    final existingFiles = <AppFile>[];
+    for (final file in files) {
+      if (await File(file.path).exists()) {
+        existingFiles.add(file);
+      }
+      // We don't delete from database anymore so that tags and metadata are preserved
+      // if the file is ever restored or re-added.
+    }
+    return existingFiles;
+  }
+
+  Future<void> syncWithDisk() async {
+    final currentFiles = state.value ?? [];
+    final existing = await _filterExistingFiles(currentFiles);
+    if (existing.length != currentFiles.length) {
+      state = AsyncData(existing);
+    }
   }
 
   Future<void> addFile(AppFile file) async {

@@ -1,6 +1,6 @@
 import 'package:path/path.dart' as p;
 
-enum NavigationTab { workspace, recent, uploads, analytics, settings }
+enum NavigationTab { workspace, uploads, analytics, settings }
 
 class AppConstants {
   static const List<String> imageExtensions = ['.jpg', '.jpeg', '.png'];

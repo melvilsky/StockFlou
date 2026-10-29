@@ -1,18 +1,24 @@
 import 'package:flutter/material.dart';
 
+import '../../../../models/app_file.dart';
+
 /// Search + filter chip bar above the file grid.
 ///
 /// [searchController] is owned by the parent.
 /// [searchQuery] is the current text in the search field.
 /// [filterType] is one of 'all', 'images', 'videos'.
+/// [activeTagFilters] is the set of currently active tag filters (OR logic).
 /// [onSearchChanged] is called when the search text changes.
 /// [onFilterChanged] is called when a filter chip is tapped.
+/// [onTagFiltersChanged] is called when a tag filter chip is toggled.
 class GenerationFilterBar extends StatelessWidget {
   final TextEditingController searchController;
   final String searchQuery;
   final String filterType;
+  final Set<String> activeTagFilters;
   final ValueChanged<String> onSearchChanged;
   final ValueChanged<String> onFilterChanged;
+  final ValueChanged<Set<String>> onTagFiltersChanged;
 
   const GenerationFilterBar({
     super.key,
@@ -21,7 +27,11 @@ class GenerationFilterBar extends StatelessWidget {
     required this.filterType,
     required this.onSearchChanged,
     required this.onFilterChanged,
+    this.activeTagFilters = const {},
+    this.onTagFiltersChanged = _noop,
   });
+
+  static void _noop(Set<String> _) {}
 
   @override
   Widget build(BuildContext context) {
@@ -95,7 +105,7 @@ class GenerationFilterBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          // Filter chips
+          // File-type filter chips
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -124,7 +134,86 @@ class GenerationFilterBar extends StatelessWidget {
               ),
             ],
           ),
+          // Separator
+          const SizedBox(width: 12),
+          Container(
+            width: 1,
+            height: 20,
+            color: colorScheme.outlineVariant.withValues(alpha: 0.4),
+          ),
+          const SizedBox(width: 12),
+          // Tag filter chips
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _tagFilterChip(
+                label: 'AI',
+                icon: Icons.auto_awesome,
+                tag: AppTags.aiGenerated,
+                color: const Color(0xFF7C3AED),
+                colorScheme: colorScheme,
+              ),
+              const SizedBox(width: 6),
+              _tagFilterChip(
+                label: 'Editorial',
+                icon: Icons.newspaper,
+                tag: AppTags.editorial,
+                color: const Color(0xFFD97706),
+                colorScheme: colorScheme,
+              ),
+            ],
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _tagFilterChip({
+    required String label,
+    required IconData icon,
+    required String tag,
+    required Color color,
+    required ColorScheme colorScheme,
+  }) {
+    final isActive = activeTagFilters.contains(tag);
+    return GestureDetector(
+      onTap: () {
+        final next = Set<String>.from(activeTagFilters);
+        if (isActive) {
+          next.remove(tag);
+        } else {
+          next.add(tag);
+        }
+        onTagFiltersChanged(next);
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        height: 30,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: isActive ? color : color.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isActive ? color : color.withValues(alpha: 0.35),
+            width: 1,
+          ),
+        ),
+        alignment: Alignment.center,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 13, color: isActive ? Colors.white : color),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isActive ? FontWeight.w700 : FontWeight.normal,
+                color: isActive ? Colors.white : color,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

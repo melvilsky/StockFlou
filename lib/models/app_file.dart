@@ -1,3 +1,11 @@
+import 'workflow_status.dart';
+
+/// Built-in tag constants.
+class AppTags {
+  static const String aiGenerated = 'ai_generated';
+  static const String editorial = 'editorial';
+}
+
 class AppFile {
   final String id;
   final String path;
@@ -9,7 +17,11 @@ class AppFile {
   final String? editorialCity;
   final String? editorialCountry;
   final int? editorialDate;
+  final WorkflowStatus workflowStatus;
   final int createdAt;
+
+  /// Free-form labels, e.g. ['ai_generated', 'editorial'].
+  final List<String> tags;
 
   AppFile({
     required this.id,
@@ -22,8 +34,26 @@ class AppFile {
     this.editorialCity,
     this.editorialCountry,
     this.editorialDate,
+    this.workflowStatus = WorkflowStatus.newFile,
     required this.createdAt,
+    this.tags = const [],
   });
+
+  // ─── Convenience helpers ───────────────────────────────────────────────────
+  bool get isAiGenerated => tags.contains(AppTags.aiGenerated);
+  bool get hasEditorialTag => tags.contains(AppTags.editorial);
+
+  /// Returns a new instance with [tag] added (de-duplicated).
+  AppFile withTag(String tag) {
+    if (tags.contains(tag)) return this;
+    return copyWith(tags: [...tags, tag]);
+  }
+
+  /// Returns a new instance with [tag] removed.
+  AppFile withoutTag(String tag) {
+    if (!tags.contains(tag)) return this;
+    return copyWith(tags: tags.where((t) => t != tag).toList());
+  }
 
   AppFile copyWith({
     String? id,
@@ -36,7 +66,9 @@ class AppFile {
     Object? editorialCity = _sentinel,
     Object? editorialCountry = _sentinel,
     Object? editorialDate = _sentinel,
+    WorkflowStatus? workflowStatus,
     int? createdAt,
+    List<String>? tags,
   }) {
     return AppFile(
       id: id ?? this.id,
@@ -61,7 +93,9 @@ class AppFile {
       editorialDate: editorialDate == _sentinel
           ? this.editorialDate
           : editorialDate as int?,
+      workflowStatus: workflowStatus ?? this.workflowStatus,
       createdAt: createdAt ?? this.createdAt,
+      tags: tags ?? this.tags,
     );
   }
 
@@ -77,11 +111,21 @@ class AppFile {
       'editorial_city': editorialCity,
       'editorial_country': editorialCountry,
       'editorial_date': editorialDate,
+      'workflow_status': workflowStatus.storageValue,
       'created_at': createdAt,
+      'tags': tags.join(','),
     };
   }
 
   factory AppFile.fromMap(Map<String, dynamic> map) {
+    final rawTags = map['tags'] as String? ?? '';
+    final parsedTags = rawTags.isEmpty
+        ? <String>[]
+        : rawTags
+              .split(',')
+              .map((t) => t.trim())
+              .where((t) => t.isNotEmpty)
+              .toList();
     return AppFile(
       id: map['id'] as String,
       path: map['path'] as String,
@@ -93,7 +137,11 @@ class AppFile {
       editorialCity: map['editorial_city'] as String?,
       editorialCountry: map['editorial_country'] as String?,
       editorialDate: map['editorial_date'] as int?,
+      workflowStatus: workflowStatusFromStorage(
+        map['workflow_status'] as String?,
+      ),
       createdAt: map['created_at'] as int,
+      tags: parsedTags,
     );
   }
 }

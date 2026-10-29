@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/state/settings_provider.dart';
+import '../../models/app_file.dart';
 import '../../models/stock_credentials.dart';
 import '../../core/state/navigation_provider.dart';
 
@@ -163,6 +164,73 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 48),
           const Text(
+            'Generation Defaults',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Default parameters for AI metadata generation',
+            style: TextStyle(
+              color: colorScheme.onSurface.withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(height: 32),
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: colorScheme.outline),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Number of Keywords',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'How many keywords the AI should generate per file (5–50)',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: colorScheme.onSurface.withValues(alpha: 0.6),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Text(
+                      '${settingsState.value?.defaultKeywordsCount ?? 15}',
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    Expanded(
+                      child: Slider(
+                        value: (settingsState.value?.defaultKeywordsCount ?? 15)
+                            .toDouble(),
+                        min: 5,
+                        max: 50,
+                        divisions: 45,
+                        label:
+                            '${settingsState.value?.defaultKeywordsCount ?? 15}',
+                        onChanged: (val) {
+                          ref
+                              .read(settingsProvider.notifier)
+                              .setDefaultKeywordsCount(val.round());
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 48),
+          const Text(
             'Editorial Locations',
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
@@ -272,7 +340,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final colorScheme = Theme.of(context).colorScheme;
     final settingsState = ref.watch(settingsProvider);
     final adobe =
-        settingsState.value?.adobeCredentials ?? const StockCredentials();
+        settingsState.value?.adobeCredentials ??
+        const StockCredentials(hostname: StockCredentials.defaultAdobeHost);
     final shutter =
         settingsState.value?.shutterstockCredentials ??
         const StockCredentials();
@@ -298,6 +367,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // Adobe Stock Card
           _buildStockCredentialCard(
             context: context,
+            stockKey: 'adobe',
             title: 'Adobe Stock (SFTP)',
             description:
                 'Hostname is usually sftp.contributor.adobestock.com. Username is your Contributor ID. You must generate a new SFTP password in the Contributor portal.',
@@ -313,6 +383,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // Shutterstock Card
           _buildStockCredentialCard(
             context: context,
+            stockKey: 'shutterstock',
             title: 'Shutterstock (FTPS)',
             description:
                 'Use FTPS for secure connections. Hostname is ftps.shutterstock.com. Username is your contributor email or username. Password is the same as your login password.',
@@ -341,12 +412,26 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Widget _buildStockCredentialCard({
     required BuildContext context,
+    required String stockKey,
     required String title,
     required String description,
     required StockCredentials credentials,
     required ValueChanged<StockCredentials> onSave,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
+    final tagFilters =
+        ref.watch(settingsProvider).value?.stockTagFilters[stockKey] ?? {};
+
+    // Helper chips for AI and Editorial
+    final tagOptions = [
+      (AppTags.aiGenerated, 'AI', Icons.auto_awesome, const Color(0xFF7C3AED)),
+      (
+        AppTags.editorial,
+        'Editorial',
+        Icons.newspaper,
+        const Color(0xFFD97706),
+      ),
+    ];
 
     // Local controllers just for this card
     final hostCtrl = TextEditingController(text: credentials.hostname);
@@ -374,6 +459,73 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               fontSize: 13,
               color: colorScheme.onSurface.withValues(alpha: 0.7),
             ),
+          ),
+          const SizedBox(height: 20),
+
+          // Upload tag routing
+          const Text(
+            'Upload routing (by tags)',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'If no tags are selected, all files are accepted. Otherwise only files with matching tags are uploaded.',
+            style: TextStyle(
+              fontSize: 12,
+              color: colorScheme.onSurface.withValues(alpha: 0.6),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            children: tagOptions.map((opt) {
+              final (tag, label, icon, color) = opt;
+              final isOn = tagFilters.contains(tag);
+              return GestureDetector(
+                onTap: () {
+                  final updated = Set<String>.from(tagFilters);
+                  if (isOn) {
+                    updated.remove(tag);
+                  } else {
+                    updated.add(tag);
+                  }
+                  ref
+                      .read(settingsProvider.notifier)
+                      .setStockTagFilter(stockKey, updated);
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isOn ? color : color.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: isOn ? color : color.withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(icon, size: 13, color: isOn ? Colors.white : color),
+                      const SizedBox(width: 6),
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: isOn
+                              ? FontWeight.w700
+                              : FontWeight.normal,
+                          color: isOn ? Colors.white : color,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
           ),
           const SizedBox(height: 24),
 
