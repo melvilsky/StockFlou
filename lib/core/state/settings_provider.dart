@@ -19,7 +19,9 @@ class SettingsState {
   SettingsState({
     this.apiKey,
     this.savedLocations = const [],
-    this.adobeCredentials = const StockCredentials(),
+    this.adobeCredentials = const StockCredentials(
+      hostname: StockCredentials.defaultAdobeHost,
+    ),
     this.shutterstockCredentials = const StockCredentials(),
     this.stockTagFilters = const {},
     this.defaultKeywordsCount = 15,
@@ -83,7 +85,10 @@ class SettingsNotifier extends AsyncNotifier<SettingsState> {
     return SettingsState(
       apiKey: apiKey,
       savedLocations: savedLocations,
-      adobeCredentials: StockCredentials.fromStorageString(adobeStr),
+      adobeCredentials: StockCredentials.fromStorageString(
+        adobeStr,
+        defaultHost: StockCredentials.defaultAdobeHost,
+      ),
       shutterstockCredentials: StockCredentials.fromStorageString(shutterStr),
       stockTagFilters: tagFilters,
       defaultKeywordsCount: defaultKeywords,
@@ -119,16 +124,27 @@ class SettingsNotifier extends AsyncNotifier<SettingsState> {
   }
 
   Future<void> saveAdobeCredentials(StockCredentials creds) async {
+    final normalized = creds.copyWith(
+      hostname: StockCredentials.sanitizeHost(
+        creds.hostname,
+        defaultHost: StockCredentials.defaultAdobeHost,
+      ),
+    );
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyAdobe, creds.toStorageString());
-    state = AsyncValue.data(state.value!.copyWith(adobeCredentials: creds));
+    await prefs.setString(_keyAdobe, normalized.toStorageString());
+    state = AsyncValue.data(
+      state.value!.copyWith(adobeCredentials: normalized),
+    );
   }
 
   Future<void> saveShutterstockCredentials(StockCredentials creds) async {
+    final normalized = creds.copyWith(
+      hostname: StockCredentials.sanitizeHost(creds.hostname),
+    );
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyShutter, creds.toStorageString());
+    await prefs.setString(_keyShutter, normalized.toStorageString());
     state = AsyncValue.data(
-      state.value!.copyWith(shutterstockCredentials: creds),
+      state.value!.copyWith(shutterstockCredentials: normalized),
     );
   }
 

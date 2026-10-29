@@ -9,7 +9,9 @@ import '../../../../core/services/metadata_service.dart';
 import '../../../../core/state/editorial_state_provider.dart';
 import '../../../../core/state/files_provider.dart';
 import '../../../../core/state/settings_provider.dart';
+import '../../../../core/widgets/single_click_area.dart';
 import '../../../../models/app_file.dart';
+import '../../domain/metadata_generation_operation.dart';
 import 'generation_widgets.dart';
 
 /// Editorial metadata section: toggle pills + city / country / date fields.
@@ -42,12 +44,6 @@ class _GenerationEditorialSectionState
   final _cityFocusNode = FocusNode();
   final _countryFocusNode = FocusNode();
 
-  static const _months = [
-    'January', 'February', 'March', 'April',
-    'May', 'June', 'July', 'August',
-    'September', 'October', 'November', 'December',
-  ];
-
   @override
   void initState() {
     super.initState();
@@ -79,8 +75,29 @@ class _GenerationEditorialSectionState
     super.dispose();
   }
 
-  String _formatDate(DateTime date) =>
-      '${_months[date.month - 1]} ${date.day} ${date.year}';
+  Future<void> _pickShootDate(EditorialStateNotifier notifier) async {
+    final current = ref.read(editorialStateProvider).date;
+    final today = DateTime.now();
+    final last = DateTime(today.year, today.month, today.day);
+    final first = DateTime(1970);
+    var initial = current ?? last;
+    if (initial.isAfter(last)) initial = last;
+    if (initial.isBefore(first)) initial = first;
+
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: first,
+      lastDate: last,
+      helpText: 'Дата съёмки',
+      cancelText: 'Отмена',
+      confirmText: 'Выбрать',
+    );
+    if (picked == null || !mounted) return;
+    final date = DateTime(picked.year, picked.month, picked.day);
+    notifier.setDate(date);
+    await _batchUpdate(date: date);
+  }
 
   /// Update editorial fields on DB files or insert local files as new DB entries.
   Future<void> _batchUpdate({
@@ -92,12 +109,12 @@ class _GenerationEditorialSectionState
     final allFiles = ref.read(filesProvider).value ?? [];
     for (final path in widget.selectedPaths) {
       final idx = allFiles.indexWhere((f) => f.path == path);
-      
+
       if (idx == -1) {
         // File does not exist in DB yet, create it
         final shouldBeEditorial = isEditorial ?? false;
         final newTags = shouldBeEditorial ? [AppTags.editorial] : <String>[];
-        
+
         final newFile = AppFile(
           id: const Uuid().v4(),
           path: path,
@@ -124,9 +141,8 @@ class _GenerationEditorialSectionState
           isEditorial: isEditorial ?? f.isEditorial,
           editorialCity: city ?? f.editorialCity,
           editorialCountry: country ?? f.editorialCountry,
-          editorialDate: date != null
-              ? date.millisecondsSinceEpoch
-              : f.editorialDate,
+          editorialDate:
+              date != null ? date.millisecondsSinceEpoch : f.editorialDate,
           tags: newTags,
         );
         await ref.read(filesProvider.notifier).updateFile(updated);
@@ -152,9 +168,10 @@ class _GenerationEditorialSectionState
       } else {
         // File exists, update it
         final f = allFiles[idx];
-        final updated = isAI
-            ? f.withTag(AppTags.aiGenerated)
-            : f.withoutTag(AppTags.aiGenerated);
+        final updated =
+            isAI
+                ? f.withTag(AppTags.aiGenerated)
+                : f.withoutTag(AppTags.aiGenerated);
         await ref.read(filesProvider.notifier).updateFile(updated);
       }
     }
@@ -234,16 +251,18 @@ class _GenerationEditorialSectionState
 
     final savedLocations =
         ref.watch(settingsProvider).value?.savedLocations ?? [];
-    final cities = savedLocations
-        .map((e) => e.split('|').first)
-        .where((e) => e.isNotEmpty)
-        .toSet()
-        .toList();
-    final countries = savedLocations
-        .map((e) => e.split('|').length > 1 ? e.split('|').last : '')
-        .where((e) => e.isNotEmpty)
-        .toSet()
-        .toList();
+    final cities =
+        savedLocations
+            .map((e) => e.split('|').first)
+            .where((e) => e.isNotEmpty)
+            .toSet()
+            .toList();
+    final countries =
+        savedLocations
+            .map((e) => e.split('|').length > 1 ? e.split('|').last : '')
+            .where((e) => e.isNotEmpty)
+            .toSet()
+            .toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -275,7 +294,8 @@ class _GenerationEditorialSectionState
 
                 if (newVal) {
                   // turned on: auto-fetch location and date
-                  String? filePath = widget.selectedExistingFile?.path ??
+                  String? filePath =
+                      widget.selectedExistingFile?.path ??
                       widget.selectedLocalInspectorPath;
                   if (filePath == null && widget.selectedPaths.isNotEmpty) {
                     filePath = widget.selectedPaths.first;
@@ -286,8 +306,9 @@ class _GenerationEditorialSectionState
                   DateTime? newDate;
 
                   if (filePath != null) {
-                    final exif =
-                        await MetadataService.readExifLocationAndDate(filePath);
+                    final exif = await MetadataService.readExifLocationAndDate(
+                      filePath,
+                    );
                     newDate = exif.date;
                     if (exif.lat != null && exif.lon != null) {
                       final geo = await GeocodingService.resolve(
@@ -340,116 +361,133 @@ class _GenerationEditorialSectionState
           const GenerationFormLabel('LOCATION'),
           const SizedBox(height: 6),
           // City autocomplete
-          RawAutocomplete<String>(
-            textEditingController: _cityController,
-            focusNode: _cityFocusNode,
-            optionsBuilder: (v) {
-              if (v.text.isEmpty) return cities;
-              return cities.where(
-                (c) => c.toLowerCase().contains(v.text.toLowerCase()),
-              );
-            },
-            onSelected: (selection) {
-              notifier.setCity(selection);
-              if (_countryController.text.isEmpty) {
-                final match = savedLocations.firstWhere(
-                  (loc) => loc.startsWith('$selection|'),
-                  orElse: () => '',
+          Semantics(
+            container: true,
+            child: RawAutocomplete<String>(
+              textEditingController: _cityController,
+              focusNode: _cityFocusNode,
+              optionsBuilder: (v) {
+                if (v.text.isEmpty) return cities;
+                return cities.where(
+                  (c) => c.toLowerCase().contains(v.text.toLowerCase()),
                 );
-                if (match.isNotEmpty) {
-                  final countryVal = match.split('|').last;
-                  _countryController.text = countryVal;
-                  notifier.setCountry(countryVal);
+              },
+              onSelected: (selection) {
+                notifier.setCity(selection);
+                if (_countryController.text.isEmpty) {
+                  final match = savedLocations.firstWhere(
+                    (loc) => loc.startsWith('$selection|'),
+                    orElse: () => '',
+                  );
+                  if (match.isNotEmpty) {
+                    final countryVal = match.split('|').last;
+                    _countryController.text = countryVal;
+                    notifier.setCountry(countryVal);
+                  }
                 }
-              }
-              _batchUpdate(city: selection, country: _countryController.text);
-            },
-            fieldViewBuilder: (context, controller, focusNode, _) {
-              return TextField(
-                controller: controller,
-                focusNode: focusNode,
-                onChanged: (val) {
-                  notifier.setCity(val);
-                  _batchUpdate(city: val);
-                },
-                decoration: _inputDecor(context).copyWith(hintText: 'Город'),
-                style: const TextStyle(fontSize: 13),
-              );
-            },
-            optionsViewBuilder: (context, onSelected, options) =>
-                _autocompleteOptionsView(
-                  context,
-                  onSelected,
-                  options,
-                  colorScheme,
-                ),
+                _batchUpdate(city: selection, country: _countryController.text);
+              },
+              fieldViewBuilder: (context, controller, focusNode, _) {
+                return TextField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  onChanged: (val) {
+                    notifier.setCity(val);
+                    _batchUpdate(city: val);
+                  },
+                  decoration: _inputDecor(context).copyWith(hintText: 'Город'),
+                  style: const TextStyle(fontSize: 13),
+                );
+              },
+              optionsViewBuilder:
+                  (context, onSelected, options) => _autocompleteOptionsView(
+                    context,
+                    onSelected,
+                    options,
+                    colorScheme,
+                  ),
+            ),
           ),
           const SizedBox(height: 6),
           // Country autocomplete
-          RawAutocomplete<String>(
-            textEditingController: _countryController,
-            focusNode: _countryFocusNode,
-            optionsBuilder: (v) {
-              if (v.text.isEmpty) return countries;
-              return countries.where(
-                (c) => c.toLowerCase().contains(v.text.toLowerCase()),
-              );
-            },
-            onSelected: (selection) {
-              notifier.setCountry(selection);
-              _batchUpdate(country: selection);
-            },
-            fieldViewBuilder: (context, controller, focusNode, _) {
-              return TextField(
-                controller: controller,
-                focusNode: focusNode,
-                onChanged: (val) {
-                  notifier.setCountry(val);
-                  _batchUpdate(country: val);
-                },
-                decoration: _inputDecor(
-                  context,
-                ).copyWith(hintText: 'Страна / Штат'),
-                style: const TextStyle(fontSize: 13),
-              );
-            },
-            optionsViewBuilder: (context, onSelected, options) =>
-                _autocompleteOptionsView(
-                  context,
-                  onSelected,
-                  options,
-                  colorScheme,
-                ),
+          Semantics(
+            container: true,
+            child: RawAutocomplete<String>(
+              textEditingController: _countryController,
+              focusNode: _countryFocusNode,
+              optionsBuilder: (v) {
+                if (v.text.isEmpty) return countries;
+                return countries.where(
+                  (c) => c.toLowerCase().contains(v.text.toLowerCase()),
+                );
+              },
+              onSelected: (selection) {
+                notifier.setCountry(selection);
+                _batchUpdate(country: selection);
+              },
+              fieldViewBuilder: (context, controller, focusNode, _) {
+                return TextField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  onChanged: (val) {
+                    notifier.setCountry(val);
+                    _batchUpdate(country: val);
+                  },
+                  decoration: _inputDecor(
+                    context,
+                  ).copyWith(hintText: 'Страна / Штат'),
+                  style: const TextStyle(fontSize: 13),
+                );
+              },
+              optionsViewBuilder:
+                  (context, onSelected, options) => _autocompleteOptionsView(
+                    context,
+                    onSelected,
+                    options,
+                    colorScheme,
+                  ),
+            ),
           ),
-          if (editorial.date != null) ...[
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHighest.withValues(
-                  alpha: 0.5,
-                ),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.calendar_today,
-                    size: 14,
-                    color: colorScheme.onSurface.withValues(alpha: 0.6),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    _formatDate(editorial.date!),
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: colorScheme.onSurface.withValues(alpha: 0.8),
+          const SizedBox(height: 6),
+          Semantics(
+            button: true,
+            label:
+                editorial.date == null
+                    ? 'Указать дату съёмки'
+                    : 'Дата съёмки ${formatEditorialDate(editorial.date!)}',
+            child: SingleClickArea(
+              onTap: () => _pickShootDate(notifier),
+              child: InputDecorator(
+                decoration: _inputDecor(context),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.calendar_today,
+                      size: 14,
+                      color: colorScheme.onSurface.withValues(alpha: 0.6),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        editorial.date == null
+                            ? 'Дата съёмки'
+                            : formatEditorialDate(editorial.date!),
+                        style: TextStyle(
+                          fontSize: 13,
+                          color:
+                              editorial.date == null
+                                  ? colorScheme.onSurface.withValues(
+                                    alpha: 0.45,
+                                  )
+                                  : colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ],
+          ),
         ],
 
         const SizedBox(height: 16),
@@ -489,15 +527,16 @@ class _TagToggle extends StatelessWidget {
             color: isActive ? color : color.withValues(alpha: 0.35),
             width: 1,
           ),
-          boxShadow: isActive
-              ? [
-                  BoxShadow(
-                    color: color.withValues(alpha: 0.25),
-                    blurRadius: 4,
-                    offset: const Offset(0, 1),
-                  ),
-                ]
-              : null,
+          boxShadow:
+              isActive
+                  ? [
+                    BoxShadow(
+                      color: color.withValues(alpha: 0.25),
+                      blurRadius: 4,
+                      offset: const Offset(0, 1),
+                    ),
+                  ]
+                  : null,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,

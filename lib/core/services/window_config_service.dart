@@ -8,8 +8,8 @@ class WindowConfigService with WindowListener {
   static const String _keyX = 'window_x';
   static const String _keyY = 'window_y';
 
-  static double _defaultWidth = 1480;
-  static double _defaultHeight = 800;
+  static final double _defaultWidth = 1480;
+  static final double _defaultHeight = 800;
 
   Future<void> init() async {
     windowManager.addListener(this);

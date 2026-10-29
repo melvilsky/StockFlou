@@ -1,12 +1,15 @@
 import 'dart:io';
 
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/state/files_provider.dart';
 import '../../../../core/state/workspaces_provider.dart';
+import '../../../organization/application/organization_providers.dart';
+import '../../../organization_search/application/organization_search_providers.dart';
 
-/// Top bar showing current workspace folder name and file counts.
+/// Top bar showing current workspace folder or organization source and file counts.
 class GenerationTopBar extends ConsumerWidget {
   final int localCount;
   final bool isLoading;
@@ -25,9 +28,47 @@ class GenerationTopBar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final colorScheme = Theme.of(context).colorScheme;
     final workspacePath = ref.watch(workspacesProvider).currentPath;
-    final folderName = workspacePath == null || workspacePath.isEmpty
-        ? ''
-        : workspacePath.split(Platform.pathSeparator).last;
+    final searchSettings = ref.watch(organizationSearchSettingsProvider);
+    final scope = searchSettings.scope;
+
+    IconData scopeIcon = Icons.folder_outlined;
+    String scopeTitle = '';
+
+    switch (scope.type) {
+      case SearchScopeType.folder:
+        final path = scope.folderPath.isNotEmpty
+            ? scope.folderPath
+            : (workspacePath ?? '');
+        scopeIcon = Icons.folder_outlined;
+        scopeTitle = path.isEmpty
+            ? '—'
+            : (path == '/'
+                ? 'Корень (/)'
+                : path.split(Platform.pathSeparator).last);
+        break;
+      case SearchScopeType.project:
+        final projects = ref.watch(projectsProvider).value ?? [];
+        final proj =
+            projects.firstWhereOrNull((p) => p.id == scope.projectId);
+        scopeIcon = Icons.business_center_outlined;
+        scopeTitle = proj != null ? 'Проект: ${proj.name}' : 'Проект';
+        break;
+      case SearchScopeType.collection:
+        final collections = ref.watch(collectionsProvider).value ?? [];
+        final col =
+            collections.firstWhereOrNull((c) => c.id == scope.collectionId);
+        scopeIcon = Icons.collections_bookmark_outlined;
+        scopeTitle = col != null ? 'Коллекция: ${col.name}' : 'Коллекция';
+        break;
+      case SearchScopeType.selection:
+        scopeIcon = Icons.check_box_outlined;
+        scopeTitle = 'Отбор';
+        break;
+      case SearchScopeType.all:
+        scopeIcon = Icons.all_inbox_outlined;
+        scopeTitle = 'Все материалы';
+        break;
+    }
 
     return ref
         .watch(filesProvider)
@@ -57,13 +98,13 @@ class GenerationTopBar extends ConsumerWidget {
               child: Row(
                 children: [
                   Icon(
-                    Icons.folder_outlined,
+                    scopeIcon,
                     size: 20,
                     color: colorScheme.primary,
                   ),
                   const SizedBox(width: 10),
                   Text(
-                    folderName.isEmpty ? '—' : folderName,
+                    scopeTitle.isEmpty ? '—' : scopeTitle,
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -103,13 +144,13 @@ class GenerationTopBar extends ConsumerWidget {
             child: Row(
               children: [
                 Icon(
-                  Icons.folder_outlined,
+                  scopeIcon,
                   size: 20,
                   color: colorScheme.outline,
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  folderName.isEmpty ? '—' : folderName,
+                  scopeTitle.isEmpty ? '—' : scopeTitle,
                   style: TextStyle(
                     fontSize: 14,
                     color: colorScheme.onSurface.withValues(alpha: 0.6),

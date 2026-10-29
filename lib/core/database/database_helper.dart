@@ -10,28 +10,48 @@ class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._init();
   static const _databaseFileName = 'stock_flow_state.db';
   static const _legacyDatabaseFileName = 'stockflou_state.db';
-  static Database? _database;
+  static const databaseVersion = 7;
 
-  DatabaseHelper._init();
+  DatabaseHelper._init([this._directoryPath]);
+
+  final String? _directoryPath;
+  Database? _database;
+  Future<Database>? _databaseInit;
+
+  /// Instance for tests: same behavior, but rooted at [directoryPath] so the
+  /// real user database is never opened.
+  static DatabaseHelper forTest(String directoryPath) =>
+      DatabaseHelper._init(directoryPath);
 
   Future<Database> get database async {
-    if (_database != null) return _database!;
-    _database = await _initDB(_databaseFileName);
-    return _database!;
+    final existing = _database;
+    if (existing != null) return existing;
+    // Concurrent callers share one init Future: a second connection is never
+    // opened and the pre-upgrade backup never runs twice.
+    final init = _databaseInit ??= _initDB(_databaseFileName);
+    try {
+      final db = await init;
+      _database = db;
+      return db;
+    } finally {
+      if (identical(_databaseInit, init)) _databaseInit = null;
+    }
   }
 
   Future<Database> _initDB(String filePath) async {
     sqfliteFfiInit();
     var databaseFactory = databaseFactoryFfi;
 
-    final appDocDir = await getApplicationSupportDirectory();
-    await _migrateLegacyDatabaseFile(appDocDir.path);
-    final dbPath = join(appDocDir.path, filePath);
+    final appDocDir = _directoryPath ??
+        (await getApplicationSupportDirectory()).path;
+    await _migrateLegacyDatabaseFile(appDocDir);
+    final dbPath = join(appDocDir, filePath);
+    await _backupBeforeUpgrade(dbPath, databaseVersion);
 
     return await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 6,
+        version: databaseVersion,
         onCreate: _createDB,
         onUpgrade: _upgradeDB,
       ),
@@ -54,9 +74,53 @@ class DatabaseHelper {
     }
   }
 
+  /// Creates a verified backup before the schema upgrade runs. The copy is
+  /// made by SQLite itself via `VACUUM INTO`, so an active WAL is folded in
+  /// correctly. If the backup cannot be created or verified, opening (and thus
+  /// migrating) aborts instead of risking user data.
+  Future<void> _backupBeforeUpgrade(String dbPath, int targetVersion) async {
+    if (!await File(dbPath).exists()) return;
+
+    final probe = await databaseFactoryFfi.openDatabase(dbPath);
+    try {
+      final rows = await probe.rawQuery('PRAGMA user_version');
+      final currentVersion = (rows.first.values.first as int?) ?? 0;
+      if (currentVersion <= 0 || currentVersion >= targetVersion) return;
+
+      final backupPath = '$dbPath.bak-v$currentVersion';
+      final backupFile = File(backupPath);
+      if (await backupFile.exists()) {
+        await backupFile.delete();
+      }
+      final escapedPath = backupPath.replaceAll("'", "''");
+      await probe.execute("VACUUM INTO '$escapedPath'");
+
+      // Verify the backup: readable, non-empty, intact, at the expected
+      // version.
+      final backup = await databaseFactoryFfi.openDatabase(backupPath);
+      try {
+        final integrity = await backup.rawQuery('PRAGMA integrity_check');
+        if (integrity.first.values.first != 'ok') {
+          throw StateError('Backup integrity check failed: $backupPath');
+        }
+        final rows = await backup.rawQuery('PRAGMA user_version');
+        if ((rows.first.values.first as int?) != currentVersion) {
+          throw StateError('Unexpected backup version: $backupPath');
+        }
+      } finally {
+        await backup.close();
+      }
+      if (await backupFile.length() == 0) {
+        throw StateError('Backup is empty: $backupPath');
+      }
+    } finally {
+      await probe.close();
+    }
+  }
+
   Future _createDB(Database db, int version) async {
     await db.execute('''
-CREATE TABLE files (
+    CREATE TABLE files (
   id TEXT PRIMARY KEY,
   path TEXT NOT NULL,
   filename TEXT NOT NULL,
@@ -76,7 +140,7 @@ CREATE TABLE files (
       'CREATE INDEX IF NOT EXISTS idx_files_path ON files(path)',
     );
     await db.execute('''
-CREATE TABLE upload_jobs (
+    CREATE TABLE upload_jobs (
   id TEXT PRIMARY KEY,
   file_id TEXT NOT NULL,
   file_path TEXT NOT NULL,
@@ -96,6 +160,9 @@ CREATE TABLE upload_jobs (
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_upload_jobs_file ON upload_jobs(file_id)',
     );
+    if (version >= 7) {
+      await _createOrganizationTables(db);
+    }
   }
 
   Future _upgradeDB(Database db, int oldVersion, int newVersion) async {
@@ -119,7 +186,7 @@ CREATE TABLE upload_jobs (
         "ALTER TABLE files ADD COLUMN workflow_status TEXT NOT NULL DEFAULT 'new'",
       );
       await db.execute('''
-CREATE TABLE IF NOT EXISTS upload_jobs (
+    CREATE TABLE IF NOT EXISTS upload_jobs (
   id TEXT PRIMARY KEY,
   file_id TEXT NOT NULL,
   file_path TEXT NOT NULL,
@@ -145,10 +212,62 @@ CREATE TABLE IF NOT EXISTS upload_jobs (
         "ALTER TABLE files ADD COLUMN tags TEXT NOT NULL DEFAULT ''",
       );
     }
+    if (oldVersion < 7) {
+      await _createOrganizationTables(db);
+    }
+  }
+
+  Future _createOrganizationTables(Database db) async {
+    await db.execute('''
+    CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  archived INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+)
+''');
+    await db.execute('''
+    CREATE TABLE IF NOT EXISTS project_folders (
+  project_id TEXT NOT NULL,
+  folder_path TEXT NOT NULL,
+  added_at INTEGER NOT NULL,
+  PRIMARY KEY (project_id, folder_path)
+)
+''');
+    await db.execute('''
+    CREATE TABLE IF NOT EXISTS collections (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+)
+''');
+    await db.execute('''
+    CREATE TABLE IF NOT EXISTS collection_items (
+  collection_id TEXT NOT NULL,
+  app_file_id TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  added_at INTEGER NOT NULL,
+  PRIMARY KEY (collection_id, app_file_id)
+)
+''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_collection_items_position ON collection_items(collection_id, position)',
+    );
+    await db.execute('''
+    CREATE TABLE IF NOT EXISTS selection_items (
+  app_file_id TEXT PRIMARY KEY,
+  position INTEGER NOT NULL
+)
+''');
   }
 
   Future<void> insertFile(AppFile file) async {
-    final db = await instance.database;
+    final db = await database;
     await db.insert(
       'files',
       file.toMap(),
@@ -157,13 +276,13 @@ CREATE TABLE IF NOT EXISTS upload_jobs (
   }
 
   Future<List<AppFile>> getAllFiles() async {
-    final db = await instance.database;
+    final db = await database;
     final result = await db.query('files', orderBy: 'created_at DESC');
     return result.map((map) => AppFile.fromMap(map)).toList();
   }
 
   Future<void> updateFile(AppFile file) async {
-    final db = await instance.database;
+    final db = await database;
     await db.update(
       'files',
       file.toMap(),
@@ -173,12 +292,26 @@ CREATE TABLE IF NOT EXISTS upload_jobs (
   }
 
   Future<void> deleteFile(String id) async {
-    final db = await instance.database;
-    await db.delete('files', where: 'id = ?', whereArgs: [id]);
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('files', where: 'id = ?', whereArgs: [id]);
+      // Membership rows are only references; removing a file from the
+      // catalog drops its references, never the other way around.
+      await txn.delete(
+        'collection_items',
+        where: 'app_file_id = ?',
+        whereArgs: [id],
+      );
+      await txn.delete(
+        'selection_items',
+        where: 'app_file_id = ?',
+        whereArgs: [id],
+      );
+    });
   }
 
   Future<void> insertUploadJob(UploadJob job) async {
-    final db = await instance.database;
+    final db = await database;
     await db.insert(
       'upload_jobs',
       job.toMap(),
@@ -187,7 +320,7 @@ CREATE TABLE IF NOT EXISTS upload_jobs (
   }
 
   Future<void> updateUploadJob(UploadJob job) async {
-    final db = await instance.database;
+    final db = await database;
     await db.update(
       'upload_jobs',
       job.toMap(),
@@ -197,13 +330,13 @@ CREATE TABLE IF NOT EXISTS upload_jobs (
   }
 
   Future<List<UploadJob>> getUploadJobs() async {
-    final db = await instance.database;
+    final db = await database;
     final result = await db.query('upload_jobs', orderBy: 'created_at DESC');
     return result.map((row) => UploadJob.fromMap(row)).toList();
   }
 
   Future<void> clearInactiveJobs() async {
-    final db = await instance.database;
+    final db = await database;
     await db.delete(
       'upload_jobs',
       where: 'status IN (?, ?, ?)',

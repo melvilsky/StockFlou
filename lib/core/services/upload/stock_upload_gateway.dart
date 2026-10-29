@@ -29,7 +29,8 @@ class SocketHandshakeUploadGateway implements StockUploadGateway {
     required UploadJob job,
     required StockCredentials credentials,
   }) async* {
-    if (credentials.hostname.trim().isEmpty) {
+    final host = StockCredentials.sanitizeHost(credentials.hostname);
+    if (host.isEmpty) {
       throw Exception('Host is empty for ${job.stockKey}.');
     }
 
@@ -37,7 +38,7 @@ class SocketHandshakeUploadGateway implements StockUploadGateway {
     Socket? socket;
     try {
       socket = await Socket.connect(
-        credentials.hostname.trim(),
+        host,
         port,
         timeout: const Duration(seconds: 4),
       );

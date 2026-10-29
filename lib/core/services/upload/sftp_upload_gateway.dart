@@ -16,7 +16,8 @@ class SftpUploadGateway implements StockUploadGateway {
     required UploadJob job,
     required StockCredentials credentials,
   }) async* {
-    if (credentials.hostname.trim().isEmpty) {
+    final host = StockCredentials.sanitizeHost(credentials.hostname);
+    if (host.isEmpty) {
       throw Exception('Host is empty for ${job.stockKey}.');
     }
     if (credentials.username.trim().isEmpty) {
@@ -35,7 +36,7 @@ class SftpUploadGateway implements StockUploadGateway {
     try {
       // 1. Connect
       final socket = await SSHSocket.connect(
-        credentials.hostname.trim(),
+        host,
         22,
         timeout: const Duration(seconds: 10),
       );

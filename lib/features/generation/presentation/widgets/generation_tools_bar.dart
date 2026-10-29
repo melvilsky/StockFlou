@@ -1,3 +1,4 @@
+import '../../../../core/widgets/app_tooltip.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -15,6 +16,8 @@ class GenerationToolsBar extends ConsumerWidget {
   final bool metadataDirty;
   final String? focusedPath;
   final VoidCallback onSelectAll;
+  final VoidCallback onClearSelection;
+  final int visibleCount;
   final VoidCallback onGenerateAI;
   final VoidCallback onGenerateBatchAI;
   final VoidCallback onSaveAll;
@@ -29,6 +32,8 @@ class GenerationToolsBar extends ConsumerWidget {
     required this.metadataDirty,
     required this.focusedPath,
     required this.onSelectAll,
+    required this.onClearSelection,
+    required this.visibleCount,
     required this.onGenerateAI,
     required this.onGenerateBatchAI,
     required this.onSaveAll,
@@ -63,13 +68,12 @@ class GenerationToolsBar extends ConsumerWidget {
     final hasSelection = focusedPath != null;
     final isFocusedVideo =
         focusedPath != null && AppConstants.isVideo(focusedPath!);
-    final saveCount = (metadataDirty && hasSelection && !isFocusedVideo)
-        ? 1
-        : 0;
+    final saveCount =
+        (metadataDirty && hasSelection && !isFocusedVideo) ? 1 : 0;
 
     return Container(
-      height: 44,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      constraints: const BoxConstraints(minHeight: 44),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLow.withValues(alpha: 0.3),
         border: Border(
@@ -78,52 +82,60 @@ class GenerationToolsBar extends ConsumerWidget {
           ),
         ),
       ),
-      child: Row(
+      child: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        runSpacing: 4,
         children: [
-          // Select / Deselect all
-          Tooltip(
-            message: selectedPaths.isEmpty ? 'Выделить всё' : 'Снять выделение',
-            child: SingleClickArea(
-              onTap: onSelectAll,
-              child: IconButton(
-                onPressed: () {},
-                icon: Icon(
-                  selectedPaths.isEmpty ? Icons.select_all : Icons.deselect,
-                  size: 22,
-                  color: colorScheme.primary,
-                ),
-              ),
+          AppTooltip(
+            message:
+                'Выделить все видимые материалы · '
+                '${Platform.isMacOS ? '⌘A' : 'Ctrl+A'}',
+            child: OutlinedButton.icon(
+              onPressed: visibleCount > 0 ? onSelectAll : null,
+              icon: const Icon(Icons.select_all, size: 20),
+              label: const Text('Выделить всё'),
             ),
           ),
+          if (selectedPaths.isNotEmpty)
+            Semantics(
+              container: true,
+              child: IconButton(
+                tooltip: 'Снять выделение',
+                onPressed: onClearSelection,
+                icon: const Icon(Icons.deselect, size: 20),
+              ),
+            ),
           const SizedBox(width: 8),
           // AI Tag
-          Tooltip(
+          AppTooltip(
             message: 'AI Tag — генерация тегов для выбранных',
             child: SingleClickArea(
-              onTap: selectedPaths.isEmpty
-                  ? null
-                  : () {
-                      if (selectedPaths.length > 1) {
-                        onGenerateBatchAI();
-                      } else {
-                        onGenerateAI();
-                      }
-                    },
+              onTap:
+                  selectedPaths.isEmpty
+                      ? null
+                      : () {
+                        if (selectedPaths.length > 1) {
+                          onGenerateBatchAI();
+                        } else {
+                          onGenerateAI();
+                        }
+                      },
               child: IconButton(
                 onPressed: selectedPaths.isEmpty ? null : () {},
                 icon: Icon(
                   Icons.auto_awesome,
                   size: 22,
-                  color: selectedPaths.isEmpty
-                      ? colorScheme.onSurface.withValues(alpha: 0.4)
-                      : colorScheme.primary,
+                  color:
+                      selectedPaths.isEmpty
+                          ? colorScheme.onSurface.withValues(alpha: 0.4)
+                          : colorScheme.primary,
                 ),
               ),
             ),
           ),
           const SizedBox(width: 16),
           // Save All
-          Tooltip(
+          AppTooltip(
             message:
                 'Сохранить метаданные в файлы (кроме видео) во всех рабочих областях',
             child: SingleClickArea(
@@ -133,39 +145,36 @@ class GenerationToolsBar extends ConsumerWidget {
                 icon: const Icon(Icons.save, size: 18),
                 label: Text('Сохранить все ($saveAllCount)'),
                 style: FilledButton.styleFrom(
-                  backgroundColor: saveAllCount > 0
-                      ? colorScheme.primary
-                      : null,
-                  foregroundColor: saveAllCount > 0
-                      ? colorScheme.onPrimary
-                      : null,
+                  backgroundColor:
+                      saveAllCount > 0 ? colorScheme.primary : null,
+                  foregroundColor:
+                      saveAllCount > 0 ? colorScheme.onPrimary : null,
                 ),
               ),
             ),
           ),
           const SizedBox(width: 8),
           // Save one
-          Tooltip(
-            message: isFocusedVideo
-                ? 'Для видео файлов запись метаданных в файл недоступна'
-                : 'Сохранить метаданные выбранного файла в БД и в файл',
+          AppTooltip(
+            message:
+                isFocusedVideo
+                    ? 'Для видео файлов запись метаданных в файл недоступна'
+                    : 'Сохранить метаданные выбранного файла в БД и в файл',
             child: FilledButton.icon(
               onPressed: saveCount > 0 ? onSaveChanges : null,
               icon: const Icon(Icons.save_outlined, size: 18),
               label: Text('Сохранить ($saveCount)'),
               style: FilledButton.styleFrom(
-                backgroundColor: saveCount > 0
-                    ? colorScheme.primaryContainer
-                    : null,
-                foregroundColor: saveCount > 0
-                    ? colorScheme.onPrimaryContainer
-                    : null,
+                backgroundColor:
+                    saveCount > 0 ? colorScheme.primaryContainer : null,
+                foregroundColor:
+                    saveCount > 0 ? colorScheme.onPrimaryContainer : null,
               ),
             ),
           ),
-          const Spacer(),
+          const SizedBox(width: 16),
           // Import CSV
-          Tooltip(
+          AppTooltip(
             message: 'Импорт метаданных из CSV',
             child: SingleClickArea(
               onTap: onImportCsv,
@@ -178,7 +187,7 @@ class GenerationToolsBar extends ConsumerWidget {
           ),
           const SizedBox(width: 8),
           // Export CSV
-          Tooltip(
+          AppTooltip(
             message: 'Экспорт выделенных (или всех) файлов в CSV',
             child: SingleClickArea(
               onTap: onExportCsv,

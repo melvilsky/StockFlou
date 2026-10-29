@@ -340,7 +340,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final colorScheme = Theme.of(context).colorScheme;
     final settingsState = ref.watch(settingsProvider);
     final adobe =
-        settingsState.value?.adobeCredentials ?? const StockCredentials();
+        settingsState.value?.adobeCredentials ??
+        const StockCredentials(hostname: StockCredentials.defaultAdobeHost);
     final shutter =
         settingsState.value?.shutterstockCredentials ??
         const StockCredentials();

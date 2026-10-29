@@ -15,7 +15,8 @@ class FtpsUploadGateway implements StockUploadGateway {
     required UploadJob job,
     required StockCredentials credentials,
   }) async* {
-    if (credentials.hostname.trim().isEmpty) {
+    final host = StockCredentials.sanitizeHost(credentials.hostname);
+    if (host.isEmpty) {
       throw Exception('Host is empty for ${job.stockKey}.');
     }
     if (credentials.username.trim().isEmpty) {
@@ -34,7 +35,7 @@ class FtpsUploadGateway implements StockUploadGateway {
       // Create FTPConnect instance.
       // isSecured: true enables FTPS (FTP over TLS/SSL)
       ftpConnect = FTPConnect(
-        credentials.hostname.trim(),
+        host,
         user: credentials.username.trim(),
         pass: credentials.password.trim(),
         port: 21, // default FTPS port is usually 21 with explicit TLS
