@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/models/stock_credentials.dart';
+import '../lib/models/upload_job.dart';
 
 void main() {
   group('StockCredentials', () {
@@ -44,6 +45,17 @@ void main() {
       );
 
       expect(loaded.hostname, 'sftp.contributor.adobestock.com');
+    });
+
+    test('uses default Shutterstock FTPS host when storage string is empty', () {
+      final creds = StockCredentials.fromStorageString(
+        '',
+        defaultHost: StockCredentials.defaultShutterstockHost,
+      );
+
+      expect(creds.hostname, 'ftps.shutterstock.com');
+      expect(uploadProtocolForStock('shutterstock'), UploadProtocol.ftps);
+      expect(uploadProtocolForStock('adobe'), UploadProtocol.sftp);
     });
   });
 }

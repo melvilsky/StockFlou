@@ -3,6 +3,9 @@ import 'dart:convert';
 class StockCredentials {
   static const defaultAdobeHost = 'sftp.contributor.adobestock.com';
 
+  /// Shutterstock Contributor: FTP с явным TLS, порт 21.
+  static const defaultShutterstockHost = 'ftps.shutterstock.com';
+
   final String hostname;
   final String username;
   final String password;

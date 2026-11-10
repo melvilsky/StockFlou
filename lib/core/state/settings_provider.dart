@@ -22,7 +22,9 @@ class SettingsState {
     this.adobeCredentials = const StockCredentials(
       hostname: StockCredentials.defaultAdobeHost,
     ),
-    this.shutterstockCredentials = const StockCredentials(),
+    this.shutterstockCredentials = const StockCredentials(
+      hostname: StockCredentials.defaultShutterstockHost,
+    ),
     this.stockTagFilters = const {},
     this.defaultKeywordsCount = 15,
   });
@@ -89,7 +91,10 @@ class SettingsNotifier extends AsyncNotifier<SettingsState> {
         adobeStr,
         defaultHost: StockCredentials.defaultAdobeHost,
       ),
-      shutterstockCredentials: StockCredentials.fromStorageString(shutterStr),
+      shutterstockCredentials: StockCredentials.fromStorageString(
+        shutterStr,
+        defaultHost: StockCredentials.defaultShutterstockHost,
+      ),
       stockTagFilters: tagFilters,
       defaultKeywordsCount: defaultKeywords,
     );
@@ -139,7 +144,10 @@ class SettingsNotifier extends AsyncNotifier<SettingsState> {
 
   Future<void> saveShutterstockCredentials(StockCredentials creds) async {
     final normalized = creds.copyWith(
-      hostname: StockCredentials.sanitizeHost(creds.hostname),
+      hostname: StockCredentials.sanitizeHost(
+        creds.hostname,
+        defaultHost: StockCredentials.defaultShutterstockHost,
+      ),
     );
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyShutter, normalized.toStorageString());

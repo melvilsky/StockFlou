@@ -344,7 +344,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const StockCredentials(hostname: StockCredentials.defaultAdobeHost);
     final shutter =
         settingsState.value?.shutterstockCredentials ??
-        const StockCredentials();
+        const StockCredentials(
+          hostname: StockCredentials.defaultShutterstockHost,
+        );
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(32),
@@ -386,7 +388,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             stockKey: 'shutterstock',
             title: 'Shutterstock (FTPS)',
             description:
-                'Use FTPS for secure connections. Hostname is ftps.shutterstock.com. Username is your contributor email or username. Password is the same as your login password.',
+                'Explicit FTP over TLS. Host ftps.shutterstock.com, port 21. Username is your contributor email or username. Password is your contributor login password.',
+            hostHint: 'ftps.shutterstock.com',
+            userHint: 'email or contributor username',
             credentials: shutter,
             onSave: (creds) {
               ref
@@ -417,6 +421,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required String description,
     required StockCredentials credentials,
     required ValueChanged<StockCredentials> onSave,
+    String hostHint = 'e.g. sftp.contributor.adobestock.com',
+    String userHint = 'e.g. 12345678',
   }) {
     final colorScheme = Theme.of(context).colorScheme;
     final tagFilters =
@@ -536,7 +542,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             controller: hostCtrl,
             decoration: _getOutlineInputDecoration(
               context,
-              'e.g. sftp.contributor.adobestock.com',
+              hostHint,
             ),
           ),
           const SizedBox(height: 16),
@@ -549,7 +555,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const SizedBox(height: 8),
           TextField(
             controller: userCtrl,
-            decoration: _getOutlineInputDecoration(context, 'e.g. 12345678'),
+            decoration: _getOutlineInputDecoration(context, userHint),
           ),
           const SizedBox(height: 16),
 

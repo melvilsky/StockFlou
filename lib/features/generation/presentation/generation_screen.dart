@@ -2264,7 +2264,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
           .enqueueFiles(
             files: fresh,
             stockKey: stockKey,
-            protocol: UploadProtocol.sftp,
+            protocol: uploadProtocolForStock(stockKey),
           );
     }
     final skipped = eligible.length - fresh.length;

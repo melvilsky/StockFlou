@@ -349,9 +349,7 @@ class HistoryScreen extends ConsumerWidget {
                           .enqueueFiles(
                             files: filesToEnqueue,
                             stockKey: stockKey,
-                            protocol:
-                                UploadProtocol
-                                    .sftp, // Depending on the stock this could be derived later
+                            protocol: uploadProtocolForStock(stockKey),
                           );
                     }
                   }

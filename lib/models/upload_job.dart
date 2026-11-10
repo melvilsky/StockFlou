@@ -56,6 +56,19 @@ UploadProtocol uploadProtocolFromStorage(String value) {
   return value == 'ftps' ? UploadProtocol.ftps : UploadProtocol.sftp;
 }
 
+/// Adobe Stock принимает файлы по SFTP.
+/// Shutterstock Contributor — FTP с явным TLS (FTPS) на порт 21.
+UploadProtocol uploadProtocolForStock(String stockKey) {
+  switch (stockKey) {
+    case 'shutterstock':
+      return UploadProtocol.ftps;
+    case 'adobe':
+      return UploadProtocol.sftp;
+    default:
+      return UploadProtocol.sftp;
+  }
+}
+
 class UploadJob {
   final String id;
   final String fileId;
