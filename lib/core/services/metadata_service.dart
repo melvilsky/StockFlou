@@ -78,8 +78,11 @@ class MetadataService {
 
     final args = <String>[
       '-overwrite_original',
+      '-CodedCharacterSet=UTF8',
+      '-IPTCDigest=new',
       '-ObjectName=$title',
       '-Title=$title',
+      '-Headline=$title',
       ...descriptionArgs,
       ..._locationArgs(city, const ['-IPTC:City=', '-XMP-photoshop:City=']),
       ..._locationArgs(country, const [
@@ -204,12 +207,58 @@ class MetadataService {
     return reason;
   }
 
+  static const _commonPaths = [
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/opt/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+  ];
+
+  static String? _resolvedExecutable;
+
+  /// Resolves the absolute path of `exiftool` for macOS GUI app bundles where
+  /// LaunchServices provides a minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`).
+  static String _resolveExiftool() {
+    final cached = _resolvedExecutable;
+    if (cached != null) return cached;
+    for (final dir in _commonPaths) {
+      final candidate = '$dir/exiftool';
+      if (File(candidate).existsSync()) {
+        _resolvedExecutable = candidate;
+        return candidate;
+      }
+    }
+    return 'exiftool';
+  }
+
+  static Map<String, String> _exiftoolEnvironment() {
+    final env = Map<String, String>.of(Platform.environment);
+    final currentPath = env['PATH'] ?? '';
+    final parts = currentPath.split(':').where((p) => p.isNotEmpty).toList();
+    for (final dir in _commonPaths.reversed) {
+      if (!parts.contains(dir)) {
+        parts.insert(0, dir);
+      }
+    }
+    env['PATH'] = parts.join(':');
+    return env;
+  }
+
   static Future<ProcessResult> _run(
     ExiftoolProcessRunner? runProcess,
     List<String> args,
   ) {
-    final runner = runProcess ?? Process.run;
-    return runner('exiftool', args);
+    if (runProcess != null) {
+      return runProcess('exiftool', args);
+    }
+    return Process.run(
+      _resolveExiftool(),
+      args,
+      environment: _exiftoolEnvironment(),
+    );
   }
 
   /// Decodes the ExifTool `-json` root: a list whose first element is the map
@@ -272,7 +321,7 @@ class MetadataService {
   static Future<({double? lat, double? lon, DateTime? date, bool hasAudio})>
   readExifLocationAndDate(String filePath) async {
     try {
-      final result = await Process.run('exiftool', [
+      final result = await _run(null, [
         '-json',
         '-n', // numeric GPS values
         '-GPSLatitude',
@@ -349,7 +398,7 @@ class MetadataService {
   /// Check if exiftool is available on the system.
   static Future<bool> isExiftoolAvailable() async {
     try {
-      final result = await Process.run('exiftool', ['-ver']);
+      final result = await _run(null, ['-ver']);
       return result.exitCode == 0;
     } catch (_) {
       return false;

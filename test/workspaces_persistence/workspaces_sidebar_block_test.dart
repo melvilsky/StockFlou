@@ -195,7 +195,7 @@ void main() {
         directoryPicker: () => chosen.future,
       ),
     );
-    await tester.tap(find.text('Добавить папку'));
+    await tester.tap(find.byTooltip('Импортировать папку с подпапками'));
     await tester.pumpWidget(const SizedBox());
     chosen.complete('/A');
     await tester.pumpAndSettle();
@@ -367,7 +367,7 @@ void main() {
       expect(find.text('ExistingFolder'), findsOneWidget);
 
       // Нажимаем «Добавить папку»
-      await tester.tap(find.widgetWithText(FilledButton, 'Добавить папку'));
+      await tester.tap(find.byTooltip('Импортировать папку с подпапками'));
       await tester.pumpAndSettle();
 
       // Запись по-прежнему ровно одна
@@ -521,7 +521,12 @@ void main() {
       await tester.pumpWidget(createSidebarApp(container: container));
       await tester.pumpAndSettle();
 
-      final semantics = tester.getSemantics(find.byType(InkWell).first);
+      final semantics = tester.getSemantics(
+        find.ancestor(
+          of: find.text('Accessible'),
+          matching: find.byType(InkWell),
+        ),
+      );
       expect(semantics.label, contains('Accessible'));
     });
   });

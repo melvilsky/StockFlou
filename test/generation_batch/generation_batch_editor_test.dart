@@ -411,6 +411,133 @@ void main() {
     );
   });
 
+  testWidgets('Editorial: локация доступна при mixed-флаге и применяется только к editorial-файлам', (
+    tester,
+  ) async {
+    // a и b - editorial, c - commercial
+    catalog = [
+      catalog[0].copyWith(
+        isEditorial: true,
+        editorialCity: 'Paris',
+        editorialCountry: 'France',
+        tags: [AppTags.editorial],
+      ),
+      catalog[1].copyWith(
+        isEditorial: true,
+        editorialCity: 'Rome',
+        editorialCountry: 'Italy',
+        tags: [AppTags.editorial],
+      ),
+      catalog[2].copyWith(
+        isEditorial: false,
+        editorialCity: null,
+        editorialCountry: null,
+      ),
+    ];
+
+    final container = await pumpScreen(tester);
+    await selectAll(tester);
+
+    // При mixed-флаге поля локации видны
+    expect(locationField(0), findsOneWidget);
+    expect(locationField(1), findsOneWidget);
+    expect(
+      find.text('Редакционные флаги различаются: локация применится к эдиториал-файлам'),
+      findsOneWidget,
+    );
+
+    await tester.enterText(locationField(0), 'Tokyo');
+    await tester.pumpAndSettle();
+    await tester.enterText(locationField(1), 'Japan');
+    await tester.pumpAndSettle();
+
+    await applyAndSettle(tester, 'Применить к 3 файлам');
+
+    final files = container.read(filesProvider).value!;
+    // a и b получили новую локацию Tokyo, Japan
+    expect(files.singleWhere((file) => file.id == 'a').editorialCity, 'Tokyo');
+    expect(files.singleWhere((file) => file.id == 'a').editorialCountry, 'Japan');
+    expect(files.singleWhere((file) => file.id == 'b').editorialCity, 'Tokyo');
+    expect(files.singleWhere((file) => file.id == 'b').editorialCountry, 'Japan');
+    // c остался не-editorial без локации
+    expect(files.singleWhere((file) => file.id == 'c').isEditorial, false);
+    expect(files.singleWhere((file) => file.id == 'c').editorialCity, isNull);
+    expect(files.singleWhere((file) => file.id == 'c').editorialCountry, isNull);
+  });
+
+  testWidgets('Editorial: выбор известного места через меню заполняет город и страну', (
+    tester,
+  ) async {
+    makeEditorialCatalog();
+    SharedPreferences.setMockInitialValues({
+      'editorial_locations': ['Prague|Czechia'],
+    });
+
+    final container = await pumpScreen(tester);
+    await selectAll(tester);
+
+    expect(find.text('Выбрать место…'), findsOneWidget);
+    await tester.tap(find.text('Выбрать место…'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Prague, Czechia').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      (locationField(0).evaluate().single.widget as TextField)
+          .controller!
+          .text,
+      'Prague',
+    );
+    expect(
+      (locationField(1).evaluate().single.widget as TextField)
+          .controller!
+          .text,
+      'Czechia',
+    );
+
+    await applyAndSettle(tester, 'Применить к 3 файлам');
+    final files = container.read(filesProvider).value!;
+    for (final id in ['a', 'b', 'c']) {
+      expect(
+        files.singleWhere((file) => file.id == id).editorialCity,
+        'Prague',
+      );
+      expect(
+        files.singleWhere((file) => file.id == id).editorialCountry,
+        'Czechia',
+      );
+    }
+  });
+
+  testWidgets('Editorial: выбор страны из autocomplete выставляет countryTouched и сохраняет значение', (
+    tester,
+  ) async {
+    makeEditorialCatalog();
+    SharedPreferences.setMockInitialValues({
+      'editorial_locations': ['Berlin|Germany', 'Vienna|Austria'],
+    });
+
+    final container = await pumpScreen(tester);
+    await selectAll(tester);
+
+    await tester.ensureVisible(locationField(1));
+    await tester.pumpAndSettle();
+    await tester.tap(locationField(1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, 'Austria'));
+    await tester.pumpAndSettle();
+
+    await applyAndSettle(tester, 'Применить к 3 файлам');
+    final files = container.read(filesProvider).value!;
+    for (final id in ['a', 'b', 'c']) {
+      expect(
+        files.singleWhere((file) => file.id == id).editorialCountry,
+        'Austria',
+      );
+    }
+  });
+
   testWidgets('смена выделения во время записи не меняет цели', (
     tester,
   ) async {

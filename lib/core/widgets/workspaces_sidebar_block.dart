@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../constants/app_constants.dart';
 import '../state/navigation_provider.dart';
 import '../state/workspaces_provider.dart';
+import '../../features/organization_search/application/organization_search_providers.dart';
 import 'single_click_area.dart';
 
 /// Отображаемое имя папки рабочей области.
@@ -22,8 +23,43 @@ String workspaceDisplayName(String path) {
 
 class WorkspacesSidebarBlock extends ConsumerWidget {
   final Future<String?> Function()? directoryPicker;
+  final VoidCallback? onImportFolder;
 
-  const WorkspacesSidebarBlock({super.key, this.directoryPicker});
+  const WorkspacesSidebarBlock({
+    super.key,
+    this.directoryPicker,
+    this.onImportFolder,
+  });
+
+  Future<void> _importFolder(BuildContext context, WidgetRef ref) async {
+    try {
+      final path = await (directoryPicker ?? getDirectoryPath)();
+      if (!context.mounted || path == null || path.isEmpty) return;
+      final ok = await ref.read(workspacesProvider.notifier).addWorkspace(path);
+      if (!context.mounted) return;
+      if (!ok && ref.read(workspacesProvider).lastError != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ref.read(workspacesProvider).lastError!)),
+        );
+      }
+      final settings = ref.read(organizationSearchSettingsProvider.notifier);
+      settings.setScope(
+        SearchScope.folder(
+          folderPath: normalizeWorkspacePath(path),
+          includeSubfolders: true,
+        ),
+      );
+      await settings.persist();
+      if (!context.mounted) return;
+      ref.read(refreshWorkspaceProvider.notifier).trigger();
+      ref.read(navigationProvider.notifier).setTab(NavigationTab.workspace);
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось импортировать папку: $error')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -79,6 +115,11 @@ class WorkspacesSidebarBlock extends ConsumerWidget {
                     ),
                   ),
                 ),
+              IconButton(
+                onPressed: onImportFolder ?? () => _importFolder(context, ref),
+                tooltip: 'Импортировать папку с подпапками',
+                icon: const Icon(Icons.add, size: 18),
+              ),
             ],
           ),
           if (workspaces.lastError != null) ...[
@@ -299,42 +340,6 @@ class WorkspacesSidebarBlock extends ConsumerWidget {
                         );
                       },
                     ),
-          ),
-          const SizedBox(height: 10),
-          SizedBox(
-            height: 34,
-            child: FilledButton.icon(
-              onPressed: () async {
-                final picker = directoryPicker ?? getDirectoryPath;
-                final path = await picker();
-                if (!context.mounted) return;
-                if (path != null && path.isNotEmpty) {
-                  final ok = await ref
-                      .read(workspacesProvider.notifier)
-                      .addWorkspace(path);
-                  if (context.mounted) {
-                    if (!ok && ref.read(workspacesProvider).lastError != null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            ref.read(workspacesProvider).lastError!,
-                          ),
-                        ),
-                      );
-                    }
-                    ref
-                        .read(navigationProvider.notifier)
-                        .setTab(NavigationTab.workspace);
-                  }
-                }
-              },
-              icon: const Icon(Icons.add, size: 16),
-              label: const Text('Добавить папку'),
-              style: FilledButton.styleFrom(
-                backgroundColor: colorScheme.primary,
-                foregroundColor: colorScheme.onPrimary,
-              ),
-            ),
           ),
           const SizedBox(height: 6),
           SizedBox(

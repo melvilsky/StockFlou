@@ -183,6 +183,15 @@ void main() {
         date: DateTime(2026, 1, 1),
       );
       expect(dateOnly, 'Street musician. January 1 2026.');
+
+      final withBoth = appendEditorialToTitle(
+        title: cityOnly,
+        city: 'Prague',
+        country: 'Czechia',
+        date: DateTime(2026, 1, 1),
+        previousCity: 'Prague',
+      );
+      expect(withBoth, 'Street musician - Prague, Czechia. January 1 2026.');
     });
   });
 }

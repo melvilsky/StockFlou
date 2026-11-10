@@ -83,6 +83,7 @@ class _AppTopBarState extends ConsumerState<AppTopBar> {
   final OverlayPortalController _navController = OverlayPortalController();
   final LayerLink _navLink = LayerLink();
   final FocusNode _scopeFocusNode = FocusNode(debugLabel: 'AppTopBar.scope');
+  final FocusNode _navFocusNode = FocusNode(debugLabel: 'AppTopBar.navigation');
   final MenuController _importController = MenuController();
   final MenuController _overflowController = MenuController();
 
@@ -94,6 +95,7 @@ class _AppTopBarState extends ConsumerState<AppTopBar> {
   @override
   void dispose() {
     _scopeFocusNode.dispose();
+    _navFocusNode.dispose();
     super.dispose();
   }
 
@@ -102,6 +104,9 @@ class _AppTopBarState extends ConsumerState<AppTopBar> {
       _closeNav();
     } else {
       setState(_navController.show);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _navOpen) _navFocusNode.requestFocus();
+      });
     }
   }
 
@@ -164,7 +169,7 @@ class _AppTopBarState extends ConsumerState<AppTopBar> {
                 const SizedBox(width: AppSpacing.md),
                 _buildScopeButton(palette, scope, areaWidth),
                 const SizedBox(width: AppSpacing.md),
-                if (overflowRisk)
+                if (compact || overflowRisk)
                   Expanded(
                     child: Align(
                       alignment: Alignment.centerLeft,
@@ -177,13 +182,23 @@ class _AppTopBarState extends ConsumerState<AppTopBar> {
                 else
                   tabs,
                 const SizedBox(width: AppSpacing.md),
-                Expanded(
-                  child: _buildRightGroup(
-                    palette,
-                    compact: compact || overflowRisk,
-                    searchMaxWidth: searchMaxWidth,
+                if (compact || overflowRisk)
+                  SizedBox(
+                    width: 3 * AppSizes.iconHitArea + 2 * AppSpacing.sm,
+                    child: _buildRightGroup(
+                      palette,
+                      compact: true,
+                      searchMaxWidth: searchMaxWidth,
+                    ),
+                  )
+                else
+                  Expanded(
+                    child: _buildRightGroup(
+                      palette,
+                      compact: false,
+                      searchMaxWidth: searchMaxWidth,
+                    ),
                   ),
-                ),
               ],
             ),
           );
@@ -482,51 +497,55 @@ class _AppTopBarState extends ConsumerState<AppTopBar> {
 
   Widget _buildNavOverlay(BuildContext context, AppPalette palette) {
     final maxHeight = MediaQuery.sizeOf(context).height * 0.7;
-    return CompositedTransformFollower(
-      link: _navLink,
-      showWhenUnlinked: false,
-      targetAnchor: Alignment.bottomLeft,
-      followerAnchor: Alignment.topLeft,
-      offset: const Offset(0, AppSpacing.sm),
-      child: TapRegion(
-        groupId: _navTapGroup,
-        onTapOutside: (_) => _closeNav(),
-        child: CallbackShortcuts(
-          bindings: {
-            const SingleActivator(LogicalKeyboardKey.escape): _closeNav,
-          },
-          child: Focus(
-            autofocus: true,
-            child: Material(
-              color: Colors.transparent,
-              child: Container(
-                width: 384,
-                constraints: BoxConstraints(maxHeight: maxHeight),
-                decoration: BoxDecoration(
-                  color: palette.surface,
-                  borderRadius: BorderRadius.circular(AppRadius.panel),
-                  border: Border.all(
-                    color: palette.border,
-                    width: AppStroke.normal,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(
-                        alpha:
-                            Theme.of(context).brightness == Brightness.dark
-                                ? 0.45
-                                : 0.16,
-                      ),
-                      blurRadius: 24,
-                      offset: const Offset(0, 8),
+    return Align(
+      alignment: Alignment.topLeft,
+      child: CompositedTransformFollower(
+        link: _navLink,
+        showWhenUnlinked: false,
+        targetAnchor: Alignment.bottomLeft,
+        followerAnchor: Alignment.topLeft,
+        offset: const Offset(0, AppSpacing.sm),
+        child: TapRegion(
+          groupId: _navTapGroup,
+          onTapOutside: (_) => _closeNav(),
+          child: CallbackShortcuts(
+            bindings: {
+              const SingleActivator(LogicalKeyboardKey.escape): _closeNav,
+            },
+            child: Focus(
+              focusNode: _navFocusNode,
+              autofocus: true,
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  width: 384,
+                  constraints: BoxConstraints(maxHeight: maxHeight),
+                  decoration: BoxDecoration(
+                    color: palette.surface,
+                    borderRadius: BorderRadius.circular(AppRadius.panel),
+                    border: Border.all(
+                      color: palette.border,
+                      width: AppStroke.normal,
                     ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(AppRadius.panel),
-                  child: _AppNavPopover(
-                    onClose: _closeNav,
-                    onSelected: _onAreaSelected,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(
+                          alpha:
+                              Theme.of(context).brightness == Brightness.dark
+                                  ? 0.45
+                                  : 0.16,
+                        ),
+                        blurRadius: 24,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(AppRadius.panel),
+                    child: _AppNavPopover(
+                      onClose: _closeNav,
+                      onSelected: _onAreaSelected,
+                    ),
                   ),
                 ),
               ),
@@ -575,11 +594,14 @@ class _AppTopBarState extends ConsumerState<AppTopBar> {
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
         if (compact)
-          _IconAction(
-            icon: Icons.search,
-            label: 'Поиск',
-            tooltip: 'Поиск по текущей области',
-            onPressed: _openSearchDialog,
+          SizedBox(
+            width: AppSizes.iconHitArea,
+            child: _IconAction(
+              icon: Icons.search,
+              label: 'Поиск',
+              tooltip: 'Поиск по текущей области',
+              onPressed: _openSearchDialog,
+            ),
           )
         else
           Flexible(
@@ -589,9 +611,15 @@ class _AppTopBarState extends ConsumerState<AppTopBar> {
             ),
           ),
         const SizedBox(width: AppSpacing.sm),
-        _buildImportMenu(palette, compact: compact),
+        SizedBox(
+          width: compact ? AppSizes.iconHitArea : null,
+          child: _buildImportMenu(palette, compact: compact),
+        ),
         const SizedBox(width: AppSpacing.sm),
-        _buildOverflowMenu(palette),
+        SizedBox(
+          width: AppSizes.iconHitArea,
+          child: _buildOverflowMenu(palette),
+        ),
       ],
     );
   }
@@ -1120,42 +1148,42 @@ class _AppNavPopover extends ConsumerStatefulWidget {
 }
 
 class _AppNavPopoverState extends ConsumerState<_AppNavPopover> {
-  /// Первый вызов onSelection приходит автоматически при подключении корня
-  /// дерева папок; он не должен закрывать popover.
-  bool _firstFolderEmission = true;
+  WorkspaceEntry? _folderEntry;
+  FolderAccessScope? _folderAccess;
+
+  FolderSelection? _lastFolderSelection;
 
   late final void Function(FolderSelection selection) _onFolderSelection =
       _handleFolderSelection;
 
   void _handleFolderSelection(FolderSelection selection) {
-    final isAutomatic = _firstFolderEmission;
-    _firstFolderEmission = false;
+    final previousSelection = _lastFolderSelection;
+    _lastFolderSelection = selection;
+    // Подключение дерева не меняет восстановленную область поиска.
+    if (previousSelection == null) return;
 
     final currentPath = ref.read(workspacesProvider).currentPath;
     if (currentPath == null || currentPath.trim().isEmpty) return;
 
-    final searchSettings = ref.read(organizationSearchSettingsProvider);
-    // Защита от перезаписи восстановленного проекта/коллекции/отбора или подпапки
-    // (перенесено из прежней оболочки без изменений).
-    if (selection.path == currentPath && !selection.includeSubfolders) {
-      if (searchSettings.scope.type != SearchScopeType.folder) return;
-      if (searchSettings.scope.folderPath.isNotEmpty &&
-          searchSettings.scope.folderPath != currentPath &&
-          isPathInsideRoot(searchSettings.scope.folderPath, currentPath)) {
-        return;
-      }
-    }
+    final folderChanged = previousSelection.path != selection.path;
+    final scope = ref.read(organizationSearchSettingsProvider).scope;
+    final folderPath =
+        !folderChanged &&
+                scope.type == SearchScopeType.folder &&
+                isPathInsideRoot(scope.folderPath, currentPath)
+            ? scope.folderPath
+            : selection.path;
 
     final notifier = ref.read(organizationSearchSettingsProvider.notifier);
     notifier.setScope(
       SearchScope.folder(
-        folderPath: selection.path,
+        folderPath: folderPath,
         includeSubfolders: selection.includeSubfolders,
       ),
     );
     notifier.persist();
 
-    if (!isAutomatic) widget.onSelected();
+    if (folderChanged) widget.onSelected();
   }
 
   void _selectProject(Project? project) {
@@ -1218,6 +1246,18 @@ class _AppNavPopoverState extends ConsumerState<_AppNavPopover> {
     final currentEntry = ref.watch(
       workspacesProvider.select((state) => state.currentEntry),
     );
+    // Hover и фокус кнопки перестраивают popover, но не должны переоткрывать дерево.
+    if (currentEntry != _folderEntry) {
+      _folderEntry = currentEntry;
+      _folderAccess =
+          currentEntry == null
+              ? null
+              : SecurityScopedFolderAccessScope(
+                rootPath: currentEntry.path,
+                bookmark: currentEntry.bookmark,
+              );
+      _lastFolderSelection = null;
+    }
     final currentPath = currentEntry?.path;
     final scope = ref.watch(
       organizationSearchSettingsProvider.select((settings) => settings.scope),
@@ -1230,15 +1270,20 @@ class _AppNavPopoverState extends ConsumerState<_AppNavPopover> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const WorkspacesSidebarBlock(),
+          WorkspacesSidebarBlock(
+            onImportFolder: () {
+              widget.onSelected();
+              ref
+                  .read(workspaceCommandProvider.notifier)
+                  .emit(WorkspaceCommand.openFolder);
+            },
+          ),
           if (currentPath != null && currentPath.trim().isNotEmpty)
             FolderNavigationView(
               key: ValueKey('folder_nav_$currentPath'),
               rootFolder: currentPath,
-              access: SecurityScopedFolderAccessScope(
-                rootPath: currentPath,
-                bookmark: currentEntry?.bookmark,
-              ),
+              initialIncludeSubfolders: scope.includeSubfolders,
+              access: _folderAccess!,
               onSelection: _onFolderSelection,
             ),
           OrganizationSidebarView(

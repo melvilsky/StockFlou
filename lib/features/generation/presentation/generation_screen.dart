@@ -906,7 +906,9 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
             }
           }
         } catch (e) {
-          debugPrint('Error listing directory $folderPath: $e');
+          if (_isLive && requestId == _loadRequestId) {
+            _showError('Не удалось прочитать папку $folderPath: $e');
+          }
         }
       }
 
@@ -1106,60 +1108,45 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
     try {
       directoryPath = await getDirectoryPath();
     } catch (e) {
-      _showError('Failed to open folder picker: $e');
+      if (_isLive) _showError('Не удалось открыть выбор папки: $e');
       return;
     }
 
-    if (directoryPath == null) return;
-
-    await ref.read(workspacesProvider.notifier).addWorkspace(directoryPath);
-
-    final dir = Directory(directoryPath);
-    if (!await dir.exists()) {
-      _showError('Selected folder does not exist: $directoryPath');
-      return;
-    }
-
-    final allExtensions = [
-      ...AppConstants.imageExtensions,
-      ...AppConstants.videoExtensions,
-    ];
-
-    final dbFiles = ref.read(filesProvider).value ?? [];
-    int addedCount = 0;
+    if (!_isLive || directoryPath == null) return;
+    if (!await _preserveUnsavedDraft() || !_isLive) return;
 
     try {
-      // Асинхронное чтение директории, чтобы не блокировать UI
-      final List<FileSystemEntity> entities =
-          await dir.list(recursive: false).toList();
-
-      if (!mounted) return;
-      setState(() {
-        for (var entity in entities) {
-          if (entity is File) {
-            final path = entity.path;
-            final ext = path.split('.').last.toLowerCase();
-
-            if (allExtensions.contains('.$ext')) {
-              final existsInDb = dbFiles.any((f) => f.path == path);
-              final existsInLocal = _localFiles.any((f) => f.path == path);
-
-              if (!existsInDb && !existsInLocal) {
-                _localFiles.add(entity);
-                addedCount++;
-              }
-            }
-          }
-        }
-      });
-
-      if (addedCount > 0) {
-        _showSuccess('Imported $addedCount new files from $directoryPath');
-      } else {
-        _showSuccess('No new files found in $directoryPath');
+      final exists = await Directory(directoryPath).exists();
+      if (!_isLive) return;
+      if (!exists) {
+        _showError('Выбранная папка не существует: $directoryPath');
+        return;
       }
+      final ok = await ref
+          .read(workspacesProvider.notifier)
+          .addWorkspace(directoryPath);
+      if (!_isLive) return;
+      if (!ok) {
+        _showError(
+          ref.read(workspacesProvider).lastError ??
+              'Не удалось сохранить рабочую область',
+        );
+      }
+      final settings = ref.read(organizationSearchSettingsProvider.notifier);
+      settings.setScope(
+        SearchScope.folder(
+          folderPath: normalizeWorkspacePath(directoryPath),
+          includeSubfolders: true,
+        ),
+      );
+      await settings.persist();
+      if (!_isLive) return;
+      await _loadCurrentWorkspaceFiles(
+        customPath: directoryPath,
+        includeSubfolders: true,
+      );
     } catch (e) {
-      _showError('Failed to scan folder: $e');
+      if (_isLive) _showError('Не удалось импортировать папку: $e');
     }
   }
 
@@ -1274,6 +1261,24 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
       _selectedExistingFile = null;
       ref.read(editorialStateProvider.notifier).reset();
       _clearResults();
+      if (!AppConstants.isVideo(local.path) && local.existsSync()) {
+        unawaited(_loadLocalFileMetadata(local.path));
+      }
+    }
+  }
+
+  Future<void> _loadLocalFileMetadata(String path) async {
+    final read = await MetadataService.readMetadata(filePath: path);
+    if (!_isLive || !read.success) return;
+    if (_selectedLocalInspectorFile?.path != path || _metadataDirty) return;
+    if ((read.title?.isNotEmpty ?? false) ||
+        (read.description?.isNotEmpty ?? false) ||
+        read.keywords.isNotEmpty) {
+      setState(() {
+        _titleController.text = read.title ?? '';
+        _descriptionController.text = read.description ?? '';
+        _keywordsController.text = read.keywords.join(', ');
+      });
     }
   }
 
@@ -1508,6 +1513,7 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
           filePath: targetPath,
           title: finalTitle,
           keywords: keywordsString,
+          description: fetchedDescription.isEmpty ? null : fetchedDescription,
           city: opContext.isEditorial ? opContext.city : null,
           country: opContext.isEditorial ? opContext.country : null,
           shootDate: opContext.isEditorial ? opContext.date : null,
@@ -1557,10 +1563,26 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
     final batchIsEditorial = editorialSnapshot.isEditorial;
 
     final List<MetadataGenerationContext> targetContexts = [];
+    final pending = _pendingBatchRequest;
     for (final path in batchTargetPaths) {
       final existing = dbFiles.firstWhereOrNull((f) => f.path == path);
       final fileCity = existing?.editorialCity?.trim() ?? '';
       final fileCountry = existing?.editorialCountry?.trim() ?? '';
+      final isEditorial = pending?.editorial ??
+          (existing?.isEditorial ?? batchIsEditorial);
+      final city = pending?.cityTouched == true
+          ? pending!.city
+          : (fileCity.isNotEmpty ? fileCity : editorialSnapshot.city.trim());
+      final country = pending?.countryTouched == true
+          ? pending!.country
+          : (fileCountry.isNotEmpty
+              ? fileCountry
+              : editorialSnapshot.country.trim());
+      final date = pending?.dateTouched == true
+          ? pending!.date
+          : (existing?.editorialDate != null
+              ? DateTime.fromMillisecondsSinceEpoch(existing!.editorialDate!)
+              : editorialSnapshot.date);
       targetContexts.add(
         MetadataGenerationContext(
           targetId: existing?.id,
@@ -1568,18 +1590,10 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
           userContext: batchUserContext,
           apiKey: batchApiKey,
           keywordCount: batchKeywordCount,
-          isEditorial: batchIsEditorial,
-          city: fileCity.isNotEmpty ? fileCity : editorialSnapshot.city.trim(),
-          country:
-              fileCountry.isNotEmpty
-                  ? fileCountry
-                  : editorialSnapshot.country.trim(),
-          date:
-              existing?.editorialDate != null
-                  ? DateTime.fromMillisecondsSinceEpoch(
-                    existing!.editorialDate!,
-                  )
-                  : editorialSnapshot.date,
+          isEditorial: isEditorial,
+          city: city,
+          country: country,
+          date: date,
         ),
       );
     }
@@ -1776,6 +1790,8 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
                 filePath: path,
                 title: finalTitle,
                 keywords: keywordsString,
+                description:
+                    fetchedDescription.isEmpty ? null : fetchedDescription,
                 city: opContext.isEditorial ? opContext.city : null,
                 country: opContext.isEditorial ? opContext.country : null,
                 shootDate: opContext.isEditorial ? opContext.date : null,
@@ -1980,6 +1996,18 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
           var title = existing?.metadataTitle;
           var description = existing?.metadataDescription;
           var keywords = existing?.metadataKeywords;
+          if (existing == null &&
+              !AppConstants.isVideo(path) &&
+              File(path).existsSync()) {
+            final diskMeta = await MetadataService.readMetadata(filePath: path);
+            if (diskMeta.success) {
+              title = diskMeta.title;
+              description = diskMeta.description;
+              if (diskMeta.keywords.isNotEmpty) {
+                keywords = diskMeta.keywords.join(', ');
+              }
+            }
+          }
           var isEditorial = existing?.isEditorial ?? false;
           var city = existing?.editorialCity ?? '';
           var country = existing?.editorialCountry ?? '';
@@ -2087,12 +2115,24 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
               tags: tags,
             );
             await ref.read(filesProvider.notifier).addFile(updated);
+            if (mounted) {
+              setState(() {
+                _localFiles.removeWhere((f) => f.path == path);
+              });
+            }
           }
 
           if (!AppConstants.isVideo(path) && File(path).existsSync()) {
+            final titleToWrite = metadataTitleForWrite(
+              title: updated.metadataTitle,
+              isEditorial: isEditorial,
+              city: city,
+              country: country,
+              editorialDateMillis: date,
+            );
             await _writeMetadata(
               filePath: path,
-              title: updated.metadataTitle ?? '',
+              title: titleToWrite,
               keywords: updated.metadataKeywords ?? '',
               description: updated.metadataDescription,
               city: isEditorial ? city : null,
@@ -2646,10 +2686,16 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
         WidgetsBinding.instance.addPostFrameCallback((_) async {
           if (!await _preserveUnsavedDraft()) return;
           if (!mounted) return;
-          final nextScope = SearchScope.folder(
-            folderPath: next.currentPath ?? '',
-            includeSubfolders: false,
-          );
+          final currentScope =
+              ref.read(organizationSearchSettingsProvider).scope;
+          final nextScope =
+              currentScope.type == SearchScopeType.folder &&
+                      currentScope.folderPath == next.currentPath
+                  ? currentScope
+                  : SearchScope.folder(
+                    folderPath: next.currentPath ?? '',
+                    includeSubfolders: true,
+                  );
           ref
               .read(organizationSearchSettingsProvider.notifier)
               .setScope(nextScope);
@@ -2724,6 +2770,22 @@ class _GenerationScreenState extends ConsumerState<GenerationScreen>
               ref
                   .read(editorialStateProvider.notifier)
                   .syncFromFile(updatedFile);
+            }
+          });
+        }
+      } else if (_selectedLocalInspectorFile != null) {
+        final addedFile = dbFiles.firstWhereOrNull(
+          (f) => f.path == _selectedLocalInspectorFile!.path,
+        );
+        if (addedFile != null) {
+          setState(() {
+            _selectedExistingFile = addedFile;
+            _selectedLocalInspectorFile = null;
+            _localFiles.removeWhere((f) => f.path == addedFile.path);
+            if (_selectedPaths.length == 1) {
+              ref
+                  .read(editorialStateProvider.notifier)
+                  .syncFromFile(addedFile);
             }
           });
         }

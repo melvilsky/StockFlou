@@ -35,6 +35,7 @@ class FolderNavigationController extends Notifier<FolderNavigationState> {
     required String rootPath,
     required FolderAccessScope access,
     void Function(FolderSelection selection)? onSelection,
+    bool? includeSubfolders,
   }) {
     final normalizedRoot = normalizeFolderPath(rootPath);
     if (state.rootPath == normalizedRoot &&
@@ -49,7 +50,7 @@ class FolderNavigationController extends Notifier<FolderNavigationState> {
       rootPath: normalizedRoot,
       currentPath: normalizedRoot,
       expandedPaths: {normalizedRoot},
-      includeSubfolders: state.includeSubfolders,
+      includeSubfolders: includeSubfolders ?? state.includeSubfolders,
     );
     _emitSelection(normalizedRoot);
     _loadChildren(normalizedRoot);

@@ -21,6 +21,7 @@ class GenerationEditorialSection extends ConsumerStatefulWidget {
   final Set<String> selectedPaths;
   final AppFile? selectedExistingFile;
   final String? selectedLocalInspectorPath;
+  final VoidCallback? onChanged;
 
   const GenerationEditorialSection({
     super.key,
@@ -28,6 +29,7 @@ class GenerationEditorialSection extends ConsumerStatefulWidget {
     required this.selectedPaths,
     this.selectedExistingFile,
     this.selectedLocalInspectorPath,
+    this.onChanged,
   });
 
   @override
@@ -106,19 +108,36 @@ class _GenerationEditorialSectionState
     String? country,
     DateTime? date,
   }) async {
+    widget.onChanged?.call();
     final allFiles = ref.read(filesProvider).value ?? [];
     for (final path in widget.selectedPaths) {
       final idx = allFiles.indexWhere((f) => f.path == path);
 
       if (idx == -1) {
-        // File does not exist in DB yet, create it
+        // File does not exist in DB yet, create it preserving any disk metadata
         final shouldBeEditorial = isEditorial ?? false;
         final newTags = shouldBeEditorial ? [AppTags.editorial] : <String>[];
+        String? diskTitle;
+        String? diskDesc;
+        String? diskKeywords;
+        if (File(path).existsSync()) {
+          final read = await MetadataService.readMetadata(filePath: path);
+          if (read.success) {
+            diskTitle = read.title;
+            diskDesc = read.description;
+            if (read.keywords.isNotEmpty) {
+              diskKeywords = read.keywords.join(', ');
+            }
+          }
+        }
 
         final newFile = AppFile(
           id: const Uuid().v4(),
           path: path,
           filename: path.split(Platform.pathSeparator).last,
+          metadataTitle: diskTitle,
+          metadataDescription: diskDesc,
+          metadataKeywords: diskKeywords,
           isEditorial: shouldBeEditorial,
           editorialCity: city,
           editorialCountry: country,
@@ -151,16 +170,33 @@ class _GenerationEditorialSectionState
   }
 
   Future<void> _updateAITag(bool isAI) async {
+    widget.onChanged?.call();
     final allFiles = ref.read(filesProvider).value ?? [];
     for (final path in widget.selectedPaths) {
       final idx = allFiles.indexWhere((f) => f.path == path);
       if (idx == -1) {
-        // File does not exist in DB yet, create it
+        // File does not exist in DB yet, create it preserving any disk metadata
         final newTags = isAI ? [AppTags.aiGenerated] : <String>[];
+        String? diskTitle;
+        String? diskDesc;
+        String? diskKeywords;
+        if (File(path).existsSync()) {
+          final read = await MetadataService.readMetadata(filePath: path);
+          if (read.success) {
+            diskTitle = read.title;
+            diskDesc = read.description;
+            if (read.keywords.isNotEmpty) {
+              diskKeywords = read.keywords.join(', ');
+            }
+          }
+        }
         final newFile = AppFile(
           id: const Uuid().v4(),
           path: path,
           filename: path.split(Platform.pathSeparator).last,
+          metadataTitle: diskTitle,
+          metadataDescription: diskDesc,
+          metadataKeywords: diskKeywords,
           createdAt: DateTime.now().millisecondsSinceEpoch,
           tags: newTags,
         );
@@ -218,14 +254,25 @@ class _GenerationEditorialSectionState
 
     final savedLocations =
         ref.watch(settingsProvider).value?.savedLocations ?? [];
+    final allFiles = ref.watch(filesProvider).value ?? const <AppFile>[];
+    final catalogLocations = <String>{
+      for (final file in allFiles)
+        if ((file.editorialCity?.isNotEmpty ?? false) ||
+            (file.editorialCountry?.isNotEmpty ?? false))
+          '${file.editorialCity ?? ''}|${file.editorialCountry ?? ''}',
+    };
+    final knownLocations = <String>{
+      ...savedLocations,
+      ...catalogLocations,
+    }.where((e) => e != '|').toList();
     final cities =
-        savedLocations
+        knownLocations
             .map((e) => e.split('|').first)
             .where((e) => e.isNotEmpty)
             .toSet()
             .toList();
     final countries =
-        savedLocations
+        knownLocations
             .map((e) => e.split('|').length > 1 ? e.split('|').last : '')
             .where((e) => e.isNotEmpty)
             .toSet()
@@ -342,7 +389,7 @@ class _GenerationEditorialSectionState
               onSelected: (selection) {
                 notifier.setCity(selection);
                 if (_countryController.text.isEmpty) {
-                  final match = savedLocations.firstWhere(
+                  final match = knownLocations.firstWhere(
                     (loc) => loc.startsWith('$selection|'),
                     orElse: () => '',
                   );

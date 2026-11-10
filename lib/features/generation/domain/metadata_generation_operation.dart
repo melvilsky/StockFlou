@@ -93,6 +93,10 @@ String formatEditorialDate(DateTime date) {
   return '${_months[date.month - 1]} ${date.day} ${date.year}';
 }
 
+final _editorialDateSuffixPattern = RegExp(
+  r'\.\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}\s+\d{4}$',
+);
+
 /// Appends location and date to the end of the title
 /// following Adobe Stock editorial guidelines.
 String appendEditorialToTitle({
@@ -100,28 +104,66 @@ String appendEditorialToTitle({
   required String city,
   required String country,
   required DateTime? date,
+  String? previousCity,
+  String? previousCountry,
 }) {
   var newTitle = title.trim();
-  if (newTitle.endsWith('.')) {
-    newTitle = newTitle.substring(0, newTitle.length - 1);
+  while (newTitle.endsWith('.')) {
+    newTitle = newTitle.substring(0, newTitle.length - 1).trimRight();
   }
 
   final locationParts = <String>[];
   if (city.isNotEmpty) locationParts.add(city);
   if (country.isNotEmpty) locationParts.add(country);
+  final locationJoined = locationParts.join(', ');
+
+  final prevLocationParts = <String>[];
+  if (previousCity != null && previousCity.trim().isNotEmpty) {
+    prevLocationParts.add(previousCity.trim());
+  }
+  if (previousCountry != null && previousCountry.trim().isNotEmpty) {
+    prevLocationParts.add(previousCountry.trim());
+  }
+  final prevLocationJoined = prevLocationParts.join(', ');
+
+  var changed = true;
+  while (changed) {
+    changed = false;
+    final dateMatch = _editorialDateSuffixPattern.firstMatch(newTitle);
+    if (dateMatch != null) {
+      newTitle = newTitle.substring(0, dateMatch.start).trimRight();
+      changed = true;
+    }
+    if (locationJoined.isNotEmpty && newTitle.endsWith(' - $locationJoined')) {
+      newTitle =
+          newTitle
+              .substring(0, newTitle.length - (' - $locationJoined').length)
+              .trimRight();
+      changed = true;
+    }
+    if (prevLocationJoined.isNotEmpty &&
+        newTitle.endsWith(' - $prevLocationJoined')) {
+      newTitle =
+          newTitle
+              .substring(0, newTitle.length - (' - $prevLocationJoined').length)
+              .trimRight();
+      changed = true;
+    }
+    while (newTitle.endsWith('.')) {
+      newTitle = newTitle.substring(0, newTitle.length - 1).trimRight();
+      changed = true;
+    }
+  }
 
   String suffix = '';
   if (locationParts.isNotEmpty) {
-    suffix += ' - ${locationParts.join(', ')}';
+    suffix += ' - $locationJoined';
   }
   if (date != null) {
     suffix += '. ${formatEditorialDate(date)}';
   }
 
   if (suffix.isNotEmpty) {
-    if (newTitle.endsWith(suffix)) {
-      return '$newTitle.';
-    }
     return '$newTitle$suffix.';
   }
 

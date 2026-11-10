@@ -29,6 +29,7 @@ class FolderNavigationView extends ConsumerStatefulWidget {
     required this.rootFolder,
     required this.access,
     this.onSelection,
+    this.initialIncludeSubfolders,
   });
 
   /// Путь подключённой корневой папки (рабочей области).
@@ -39,6 +40,8 @@ class FolderNavigationView extends ConsumerStatefulWidget {
 
   /// Выдача выбора: путь папки и режим «С подпапками».
   final void Function(FolderSelection selection)? onSelection;
+
+  final bool? initialIncludeSubfolders;
 
   @override
   ConsumerState<FolderNavigationView> createState() =>
@@ -73,6 +76,7 @@ class _FolderNavigationViewState extends ConsumerState<FolderNavigationView> {
           rootPath: widget.rootFolder,
           access: widget.access,
           onSelection: widget.onSelection,
+          includeSubfolders: widget.initialIncludeSubfolders,
         );
   }
 
@@ -103,6 +107,19 @@ class _FolderNavigationViewState extends ConsumerState<FolderNavigationView> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _buildToolbar(state, colorScheme),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: Text(
+              'С подпапками',
+              style: TextStyle(fontSize: 12, color: colorScheme.onSurface),
+            ),
+            value: state.includeSubfolders,
+            onChanged:
+                (value) => ref
+                    .read(folderNavigationProvider.notifier)
+                    .setIncludeSubfolders(value),
+          ),
           const SizedBox(height: 6),
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 220),
@@ -209,23 +226,6 @@ class _FolderNavigationViewState extends ConsumerState<FolderNavigationView> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Text(
-          'С подпапками',
-          style: TextStyle(fontSize: 12, color: colorScheme.onSurface),
-        ),
-        const SizedBox(width: 4),
-        SizedBox(
-          width: 32,
-          height: 32,
-          child: Switch(
-            value: state.includeSubfolders,
-            onChanged:
-                (value) => ref
-                    .read(folderNavigationProvider.notifier)
-                    .setIncludeSubfolders(value),
           ),
         ),
       ],

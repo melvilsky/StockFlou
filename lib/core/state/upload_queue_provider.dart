@@ -1,13 +1,17 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../features/generation/domain/metadata_generation_operation.dart';
 import '../../models/app_file.dart';
 import '../../models/stock_credentials.dart';
 import '../../models/upload_job.dart';
 import '../../models/workflow_status.dart';
+import '../constants/app_constants.dart';
 import '../database/database_helper.dart';
+import '../services/metadata_service.dart';
 import '../services/upload/composite_upload_gateway.dart';
 import 'files_provider.dart';
 import 'settings_provider.dart';
@@ -219,6 +223,7 @@ class UploadQueueNotifier extends AsyncNotifier<List<UploadJob>> {
     }
 
     try {
+      await _ensureMetadataOnDisk(uploading);
       final gateway = ref.read(stockUploadGatewayProvider);
       await for (final event in gateway.upload(
         job: uploading,
@@ -253,6 +258,46 @@ class UploadQueueNotifier extends AsyncNotifier<List<UploadJob>> {
       // Regardless of success/failure, trigger processQueue to pick up any pending jobs
       unawaited(processQueue());
     }
+  }
+
+  Future<void> _ensureMetadataOnDisk(UploadJob uploading) async {
+    if (AppConstants.isVideo(uploading.filePath)) return;
+    if (!File(uploading.filePath).existsSync()) return;
+    final files = ref.read(filesProvider).value ?? const <AppFile>[];
+    final file =
+        files.where((f) => f.id == uploading.fileId).firstOrNull ??
+        files.where((f) => f.path == uploading.filePath).firstOrNull;
+    if (file == null) return;
+    final hasMeta =
+        (file.metadataTitle?.trim().isNotEmpty ?? false) ||
+        (file.metadataKeywords?.trim().isNotEmpty ?? false);
+    if (!hasMeta) return;
+
+    var shootDate =
+        file.isEditorial && file.editorialDate != null
+            ? DateTime.fromMillisecondsSinceEpoch(file.editorialDate!)
+            : null;
+    if (file.isEditorial && shootDate == null) {
+      final exif = await MetadataService.readExifLocationAndDate(file.path);
+      shootDate = exif.date;
+    }
+
+    final titleToWrite = metadataTitleForWrite(
+      title: file.metadataTitle,
+      isEditorial: file.isEditorial,
+      city: file.editorialCity,
+      country: file.editorialCountry,
+      editorialDateMillis: shootDate?.millisecondsSinceEpoch,
+    );
+    await MetadataService.writeMetadata(
+      filePath: file.path,
+      title: titleToWrite,
+      keywords: file.metadataKeywords?.trim() ?? '',
+      description: file.metadataDescription?.trim(),
+      city: file.isEditorial ? (file.editorialCity?.trim() ?? '') : null,
+      country: file.isEditorial ? (file.editorialCountry?.trim() ?? '') : null,
+      shootDate: shootDate,
+    );
   }
 
   Future<void> _markFileUploaded(String fileId) async {

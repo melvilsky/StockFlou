@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/constants/app_constants.dart';
+import '../../../../core/state/files_provider.dart';
 import '../../../../core/state/settings_provider.dart';
 import '../../../../core/state/upload_queue_provider.dart';
 import '../../../../core/theme/app_theme.dart';
@@ -826,6 +827,7 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
             selectedPaths: widget.selectedPaths.toSet(),
             selectedExistingFile: widget.selectedFile,
             selectedLocalInspectorPath: widget.selectedLocalPath,
+            onChanged: widget.onSingleChanged,
           )
         else
           _batchEditorialField(palette),
@@ -966,7 +968,7 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (showCommon && chips.isNotEmpty)
+          if (chips.isNotEmpty) ...[
             Wrap(
               spacing: AppSpacing.xs,
               runSpacing: AppSpacing.xs,
@@ -974,11 +976,8 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
                 for (final chip in chips) chip,
               ],
             ),
-          if (_keywordsMode == KeywordsApplyMode.replace && chips.isEmpty)
-            const SizedBox.shrink()
-          else if (replacedChips.isNotEmpty)
-            SizedBox.shrink(),
-          if (showCommon) const SizedBox(height: AppSpacing.xs),
+            const SizedBox(height: AppSpacing.xs),
+          ],
           TextField(
             controller: _multiKeywordInputController,
             style: const TextStyle(fontSize: 12),
@@ -987,7 +986,9 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
               border: InputBorder.none,
               hintText:
                   _keywordsMode == KeywordsApplyMode.add
-                      ? 'Добавить ключи через запятую'
+                      ? (info.keywordsMixed
+                          ? 'Индивидуальные ключи сохранятся · добавить через запятую'
+                          : 'Добавить ключи через запятую')
                       : 'Новый список ключей через запятую',
               hintStyle: TextStyle(fontSize: 12, color: palette.textMuted),
             ),
@@ -1038,27 +1039,39 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
     final info = widget.batchInfo;
     final savedLocations =
         ref.watch(settingsProvider).value?.savedLocations ?? const <String>[];
+    final allFiles = ref.watch(filesProvider).value ?? const <AppFile>[];
+    final catalogLocations = <String>{
+      for (final file in allFiles)
+        if ((file.editorialCity?.isNotEmpty ?? false) ||
+            (file.editorialCountry?.isNotEmpty ?? false))
+          '${file.editorialCity ?? ''}|${file.editorialCountry ?? ''}',
+    };
+    final knownLocations = <String>{
+      ...savedLocations,
+      ...catalogLocations,
+    }.where((entry) => entry != '|').toList();
+
     final cities =
-        savedLocations
+        knownLocations
             .map((entry) => entry.split('|').first)
             .where((entry) => entry.isNotEmpty)
             .toSet()
             .toList();
     final countries =
-        savedLocations
+        knownLocations
             .map(
-              (entry) => entry.split('|').length > 1 ? entry.split('|').last : '',
+              (entry) =>
+                  entry.split('|').length > 1 ? entry.split('|').last : '',
             )
             .where((entry) => entry.isNotEmpty)
             .toSet()
             .toList();
-    // Поля локации доступны и когда у всех файлов Editorial уже включён:
+    // Поля локации доступны и когда среди выбранных файлов есть Editorial:
     // иначе их нельзя ни увидеть, ни изменить без смены tri-state.
+    final hasEditorial = info.editorialCommon || info.editorialMixed;
     final locationAvailable =
         _editorialMode == true ||
-        (_editorialMode == null &&
-            !info.editorialMixed &&
-            info.editorialCommon);
+        (_editorialMode == null && hasEditorial);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1076,12 +1089,60 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
           Padding(
             padding: const EdgeInsets.only(top: AppSpacing.xs),
             child: Text(
-              'Редакционные флаги выбранных файлов различаются',
+              _editorialMode == null
+                  ? 'Редакционные флаги различаются: локация применится к эдиториал-файлам'
+                  : 'Редакционные флаги выбранных файлов различаются',
               style: TextStyle(fontSize: 11, color: palette.textMuted),
             ),
           ),
         if (locationAvailable) ...[
           const SizedBox(height: AppSpacing.sm),
+          if (knownLocations.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: PopupMenuButton<String>(
+                  tooltip: 'Выбрать из известных мест',
+                  onSelected: (loc) {
+                    final parts = loc.split('|');
+                    _multiCityController.text = parts.first;
+                    _cityTouched = true;
+                    if (parts.length > 1 && parts.last.isNotEmpty) {
+                      _multiCountryController.text = parts.last;
+                      _countryTouched = true;
+                    }
+                    _emitDraft();
+                  },
+                  itemBuilder: (context) => [
+                    for (final loc in knownLocations)
+                      PopupMenuItem(
+                        value: loc,
+                        child: Text(
+                          loc.split('|').where((s) => s.isNotEmpty).join(', '),
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                  ],
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.place_outlined, size: 14, color: palette.primary),
+                      const SizedBox(width: AppSpacing.xs),
+                      Text(
+                        'Выбрать место…',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: palette.primary,
+                        ),
+                      ),
+                      Icon(Icons.arrow_drop_down, size: 14, color: palette.primary),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           Row(
             children: [
               Expanded(
@@ -1097,7 +1158,7 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
                     _cityTouched = true;
                     if (!_countryTouched &&
                         _multiCountryController.text.isEmpty) {
-                      final match = savedLocations.firstWhere(
+                      final match = knownLocations.firstWhere(
                         (entry) => entry.startsWith('$selection|'),
                         orElse: () => '',
                       );
@@ -1126,6 +1187,10 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
                   mixed: info.countryMixed,
                   touched: _countryTouched,
                   options: countries,
+                  onSelected: (selection) {
+                    _countryTouched = true;
+                    _emitDraft();
+                  },
                   onTouched: () => _countryTouched = true,
                   onClear: () {
                     _multiCountryController.clear();
@@ -1223,17 +1288,54 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
                   color: mixed ? palette.warning : palette.textMuted,
                 ),
                 isDense: true,
-                suffixIcon:
-                    value.text.isNotEmpty || touched
-                        ? IconButton(
+                suffixIcon: () {
+                  final showClear = value.text.isNotEmpty || touched;
+                  final showDropdown = options.isNotEmpty;
+                  if (!showClear && !showDropdown) return null;
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (showClear)
+                        IconButton(
                           tooltip: 'Очистить у выбранных файлов',
                           onPressed: onClear,
                           icon: const Icon(
                             Icons.backspace_outlined,
-                            size: 15,
+                            size: 14,
                           ),
-                        )
-                        : null,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 24,
+                            minHeight: 24,
+                          ),
+                        ),
+                      if (showDropdown)
+                        PopupMenuButton<String>(
+                          tooltip: 'Выбрать $hint',
+                          padding: EdgeInsets.zero,
+                          icon: const Icon(Icons.arrow_drop_down, size: 18),
+                          constraints: const BoxConstraints(maxHeight: 220),
+                          onSelected: (selected) {
+                            controller.text = selected;
+                            onSelected?.call(selected);
+                            onTouched();
+                            _emitDraft();
+                          },
+                          itemBuilder: (context) => [
+                            for (final opt in options)
+                              PopupMenuItem(
+                                value: opt,
+                                height: 32,
+                                child: Text(
+                                  opt,
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ),
+                          ],
+                        ),
+                    ],
+                  );
+                }(),
               ),
               onChanged: (_) {
                 onTouched();
@@ -1466,6 +1568,12 @@ class _GenerationEditorPanelState extends ConsumerState<GenerationEditorPanel> {
           parts.add(
             request.editorial! ? 'Editorial: включить' : 'Editorial: выключить',
           );
+        }
+        if (request.cityTouched || request.countryTouched) {
+          parts.add('место съёмки');
+        }
+        if (request.dateTouched) {
+          parts.add('дата съёмки');
         }
         if (request.aiTag != null) {
           parts.add(request.aiTag! ? 'AI-тег: включить' : 'AI-тег: выключить');
